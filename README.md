@@ -1,1051 +1,506 @@
-# 🚀 ApeBond Notify
+# 🚀 ApeBond Notify — Technical Analysis & Architecture Documentation
 
-**Automated Bond Monitoring, Analysis, Ranking & Notification System**
-
-**Hệ thống tự động giám sát, phân tích, xếp hạng và thông báo cơ hội Bond**
-
----
-
-# 🇬🇧 English
-
-## 1. Project Overview
-
-**ApeBond Notify** is an automated system designed to monitor, analyze, rank, and notify users about bonding opportunities from the **ApeBond** protocol.
-
-The system supports both **EVM-compatible blockchains** and **Solana**.
-
-### Main Features
-
-* Synchronize active bond contracts from ApeBond.
-* Monitor bond data across supported blockchain networks.
-* Retrieve on-chain bond information.
-* Calculate bond financial metrics.
-* Retrieve token prices from external price providers.
-* Rank bonds based on profitability.
-* Store bond history in MySQL.
-* Send qualified opportunities through Discord Webhook.
-* Run automatically at configurable intervals.
+> **System:** `apebond-notify`  
+> **Documentation:** Complete Technical Report & Source Code Analysis  
+> **Report File:** [Baocao.md](file:///c:/apebond-notify/Baocao.md)
 
 ---
 
-## 2. Supported Networks
+# Table of Contents
 
-### EVM Networks
-
-The project supports EVM-compatible networks including:
-
-* Ethereum
-* BNB Chain
-* Polygon
-* Arbitrum
-* Base
-* Linea
-* Sonic
-* Berachain
-
-### Solana
-
-Solana bonds are processed using Solana RPC and on-chain account data.
-
----
-
-## 3. Technology Stack
-
-| Component              | Technology                 |
-| ---------------------- | -------------------------- |
-| Programming Language   | Python 3.8+                |
-| Database               | MySQL                      |
-| EVM Interaction        | Web3.py, Multicall V3      |
-| Solana Interaction     | Solana Python SDK, Solders |
-| Environment Management | python-dotenv              |
-| Concurrency            | ThreadPoolExecutor         |
-| Notification           | Discord Webhook            |
-| Token Price Sources    | CoinGecko / DexScreener    |
-
----
-
-## 4. Project Structure
-
-```text
-apebond-notify/
-│
-├── index.py
-├── config.py
-├── helpers.py
-├── execute_data.py
-├── process_bond_evm.py
-├── process_bond_sol.py
-│
-├── requirements.txt
-├── .env
-├── .gitignore
-└── README.md
-```
-
-### Module Responsibilities
-
-| Module                | Responsibility                                                 |
-| --------------------- | -------------------------------------------------------------- |
-| `index.py`            | Main execution flow, synchronization, ranking and notification |
-| `process_bond_evm.py` | EVM bond data retrieval and calculations                       |
-| `process_bond_sol.py` | Solana bond data retrieval and calculations                    |
-| `execute_data.py`     | MySQL database operations                                      |
-| `helpers.py`          | Shared utilities, token pricing and Discord notifications      |
-| `config.py`           | Environment variables, RPC configuration and chain mappings    |
+1. [Project Overview](#1-project-overview)
+2. [Setup & Run](#2-setup--run)
+3. [Entry Point](#3-entry-point)
+4. [Runtime Flow](#4-runtime-flow)
+5. [Bond Data Sources](#5-bond-data-sources)
+6. [EVM Flow](#6-evm-flow)
+7. [Solana Flow](#7-solana-flow)
+8. [EVM vs Solana](#8-evm-vs-solana)
+9. [Bond Field Traceability](#9-bond-field-traceability)
+10. [Token Pricing](#10-token-pricing)
+11. [Bond Price Formula](#11-bond-price-formula)
+12. [Bonus Formula](#12-bonus-formula)
+13. [Max Buy Formula](#13-max-buy-formula)
+14. [Bond Validation](#14-bond-validation)
+15. [Bond Ranking](#15-bond-ranking)
+16. [Database Persistence](#16-database-persistence)
+17. [Discord Notification](#17-discord-notification)
+18. [Retry / Timeout / Cache](#18-retry--timeout--cache)
+19. [Configuration](#19-configuration)
+20. [Sensitive Data](#20-sensitive-data)
+21. [Source Code Functional Classification](#21-source-code-functional-classification)
+22. [Dependency Map](#22-dependency-map)
+23. [Data Flow](#23-data-flow)
+24. [Sequence Diagram](#24-sequence-diagram)
+25. [Target Modules](#25-target-modules)
+26. [Formula Table](#26-formula-table)
+27. [Calculation Examples](#27-calculation-examples)
+28. [Problems / Risks](#28-problems--risks)
+29. [Questions to Confirm](#29-questions-to-confirm)
+30. [Acceptance Criteria](#30-acceptance-criteria)
+31. [Final Conclusion](#31-final-conclusion)
 
 ---
 
-## 5. Installation
+# 1. Project Overview
 
-### Step 1 — Clone the Repository
+`apebond-notify` is an automated bond monitoring, financial calculation, ranking, and notification engine designed for **ApeBond** protocol opportunities across EVM-compatible chains and Solana.
 
+* **Supported EVM Chains:** Ethereum (ETH), BNB Chain (BNB), Polygon (POL), Arbitrum (ARB), Base (BAS), Linea (LIN), Sonic (SON), Berachain (BER), Unichain (UNI), Hyperliquid (HYPER).
+* **Supported Non-EVM:** Solana (SOL).
+
+The main system objectives are:
+1. Discover active bond contracts via ApeBond REST API.
+2. Read on-chain bond state (EVM Multicall V3 & Solana binary layout parsing).
+3. Resolve token market prices (ApeBond Price API -> CoinGecko -> DexScreener weighted liquidity & outlier filter).
+4. Compute financial metrics: Net Bonus with fees, Max Buy, Min/Max Price.
+5. Rank top 10 opportunities by `max_bonus` descending.
+6. Persist results in MySQL (`bond_history`).
+7. Notify qualifying bonds (where `min_bonus >= notify_threshold`) to Discord Webhook.
+
+---
+
+# 2. Setup & Run
+
+## Requirements
+* Python 3.8+
+* MySQL 5.7+ / 8.0+
+
+## Installation
 ```bash
-git clone <your-repository-url>
+# Clone repository
+git clone <repository-url>
 cd apebond-notify
-```
 
-### Step 2 — Create Virtual Environment
-
-#### Windows
-
-```powershell
+# Setup virtual environment
 python -m venv .venv
+
+# Activate environment (Windows)
 .venv\Scripts\activate
-```
-
-#### macOS / Linux
-
-```bash
-python -m venv .venv
+# Activate environment (Linux/macOS)
 source .venv/bin/activate
-```
 
-### Step 3 — Install Dependencies
-
-```bash
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-If `requirements.txt` is unavailable:
-
-```bash
-pip install python-dotenv requests web3 solana==0.36.0 solders mysql-connector-python
-```
-
----
-
-## 6. Configuration
-
-Create a `.env` file in the project root:
-
-```ini
-ENV=local
-
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-
-HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY
-
-MIN_BONUS_NOTIFY=10.0
-
-LOCAL_DB_HOST=localhost
-LOCAL_DB_USER=root
-LOCAL_DB_PASS=
-LOCAL_DB_NAME=apebond-notify
-LOCAL_DB_PORT=3306
-```
-
-### Configuration Parameters
-
-| Variable              | Description                             |
-| --------------------- | --------------------------------------- |
-| `ENV`                 | Runtime environment                     |
-| `DISCORD_WEBHOOK_URL` | Discord notification endpoint           |
-| `HELIUS_RPC_URL`      | Solana RPC endpoint                     |
-| `MIN_BONUS_NOTIFY`    | Minimum bonus required for notification |
-| `LOCAL_DB_HOST`       | MySQL host                              |
-| `LOCAL_DB_USER`       | MySQL username                          |
-| `LOCAL_DB_PASS`       | MySQL password                          |
-| `LOCAL_DB_NAME`       | MySQL database                          |
-| `LOCAL_DB_PORT`       | MySQL port                              |
-
-> **Security:** Never commit `.env` to Git. It may contain API keys, RPC credentials, database credentials, and Discord Webhook URLs.
-
----
-
-## 7. Database Setup
-
-Create the MySQL database:
-
-```sql
-CREATE DATABASE `apebond-notify`;
-```
-
-Example bond configuration table:
-
-```sql
-CREATE TABLE IF NOT EXISTS `list_bond_contract_notify` (
-    `id` INT(11) NOT NULL AUTO_INCREMENT,
-    `chain` VARCHAR(20) NOT NULL,
-    `contract_address` VARCHAR(100) NOT NULL,
-    `token_symbol` VARCHAR(50) NOT NULL,
-    `status` VARCHAR(20) DEFAULT 'active',
-    `notify_threshold` FLOAT DEFAULT '10',
-    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `contract_address` (`contract_address`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
----
-
-## 8. Running the Application
-
-Run the scanner once:
-
+## Running
 ```bash
 python index.py
 ```
 
-To run it automatically every 10 minutes on Windows PowerShell:
+---
 
-```powershell
-while ($true) {
-    python index.py
-    Start-Sleep -Seconds 600
-}
-```
+# 3. Entry Point
 
-### System Flow
+| Item | File | Function / Location | Description |
+| :--- | :--- | :--- | :--- |
+| **Entry Point** | `index.py` | `if __name__ == "__main__":` (L103-L123) | Application entry block |
+| **Scheduler** | `helpers.py` | `set_bedtime()`, `sleep_until_wakeup()` | Pauses execution between 23:30 - 06:30 (VN Time) |
+| **Bond Discovery** | `execute_data.py` | `fetch_and_update_bonds()` | Syncs bonds from `https://realtime-api.ape.bond/bonds` to MySQL |
+| **EVM Processing** | `process_bond_evm.py` | `process_bonds()` | ThreadPoolExecutor (10 workers) + Multicall V3 |
+| **Solana Processing** | `process_bond_sol.py` | `process_bond_sol()` | ThreadPoolExecutor (10 workers) + RPC Struct Unpacking |
+| **Pricing** | `helpers.py` | `get_token_price_unified()` | Unified price resolution with RAM cache |
+| **Ranking** | `index.py` | `save_and_notify_top_bonds_by_bonus()` | Sorts by `max_bonus` DESC, takes Top 10 |
+| **Database** | `execute_data.py` | `create_database_and_table()`, `fetch_bond_data()` | MySQL DDL & DML operations |
+| **Discord** | `helpers.py` | `send_discord_webhook_message()` | Posts notifications to Discord Webhook |
+
+---
+
+# 4. Runtime Flow
 
 ```text
-ApeBond API
-     │
-     ▼
-Synchronize Bond Contracts
-     │
-     ▼
-MySQL
-     │
-     ▼
-Fetch Active Bonds
-     │
-     ├───────────────┐
-     ▼               ▼
-   EVM            Solana
-     │               │
-     ▼               ▼
-On-chain Data    Account Data
-     │               │
-     └───────┬───────┘
-             ▼
-      Price & Metrics
-             │
-             ▼
-        Rank by Bonus
-             │
-             ▼
-        Save History
-             │
-             ▼
-      Discord Webhook
+index.py (__main__)
+    │
+    ├─► helpers.set_bedtime() ──(True)──► helpers.sleep_until_wakeup()
+    │        │
+    │     (False)
+    │        │
+    ├─► execute_data.fetch_and_update_bonds() ──► HTTP GET ApeBond API ──► Upsert DB
+    ├─► execute_data.fetch_bond_data("EVM")  ──► Query active EVM bonds
+    ├─► execute_data.fetch_bond_data("SOL")  ──► Query active SOL bonds
+    │
+    ├─► process_bond_evm.process_bonds() ──► ThreadPool (10) ──► Multicall V3 ──► Calc Net Bonus
+    ├─► process_bond_sol.process_bond_sol() ──► ThreadPool (10) ──► Solana RPC ──► Calc Net Bonus
+    │
+    └─► index.save_and_notify_top_bonds_by_bonus()
+             ├─► Merge EVM + SOL bonds
+             ├─► Sort by max_bonus DESC ──► Cut Top 10
+             ├─► Filter min_bonus >= notify_threshold
+             ├─► Insert Top 10 to DB (bond_history)
+             └─► helpers.send_discord_webhook_message() ──► POST Discord Webhook
 ```
 
 ---
 
-## 9. Core Business Logic
+# 5. Bond Data Sources
 
-### Validation Rules
-
-A bond is processed only when:
-
-1. Its status is `active`.
-2. Required on-chain data is successfully retrieved.
-3. Parsed data is valid.
-4. Required token prices are greater than zero.
-5. The calculated bonus satisfies `MIN_BONUS_NOTIFY`.
-
-For example:
-
-```ini
-MIN_BONUS_NOTIFY=10.0
-```
-
-means only bonds with a qualifying bonus of at least **10%** are considered for notification.
+* **API Endpoint:** `https://realtime-api.ape.bond/bonds`
+* **Method:** `GET`
+* **Timeout:** 10 seconds
+* **Parsing:** Unpacks `bonds` array. Maps `chainId` to chain string using `ID_CHAIN_MAP` (`config.py`). Filter out `soldOut: true`.
+* **Upsert Query:**
+  ```sql
+  INSERT INTO list_bond_contract_notify (chain, contract_address, token_symbol, status)
+  VALUES (%s, %s, %s, %s)
+  ON DUPLICATE KEY UPDATE
+      chain = VALUES(chain),
+      token_symbol = VALUES(token_symbol),
+      status = VALUES(status),
+      updated_at = CURRENT_TIMESTAMP
+  ```
 
 ---
 
-## 10. Financial Calculations
+# 6. EVM Flow
 
-### Debt Decay
+* **Multicall V3 Address:** `0xcA11bde05977b3631167028862bE2a173976CA11`
+* **Contract Function Calls (via `tryAggregate`):**
 
-```text
-Debt Decay =
-(total_debt × time_since_last_decay) / vesting_term
-```
+| Contract Method | Function Selector | Return Type | Decoded Variable |
+| :--- | :--- | :--- | :--- |
+| `payoutToken()` | `0x868b5774` | `address` | `payout_token` |
+| `principalToken()` | `0xb655b38d` | `address` | `principal_token` |
+| `trueBillPrice()` | `0xd1eb01e0` | `uint256` | `true_bill_price` |
+| `terms()` | `0x1f028fae` | `tuple(uint256[7])` | `terms` dict |
+| `feeInPayout()` | `0x582ea8fd` | `uint256` | `fee_in_payout` |
+| `trueBondPrices()` | `0x937c4d51` | `tuple[]` | `true_bond_price_tier` |
 
-### Current Debt
-
-```text
-Current Debt =
-total_debt - debt_decay
-```
-
-### Bill Price
-
-```text
-Bill Price =
-(control_variable × debt_ratio × 10^16)
-/
-(10^principal_decimals × 10^18)
-```
-
-The calculated price is constrained by the bond's minimum price.
-
-### True Bond Price
-
-```text
-True Bond Price =
-(bill_price × 10^6)
-/
-(10^6 - fee_in_principal)
-```
-
-### Discount
-
-```text
-Discount =
-((payout_price - bond_price) / payout_price) × 100
-```
-
-### Net Bonus
-
-```text
-Net Bonus =
-(
-    (1 + (payout_price / bond_price - 1))
-    × (1 - (fee_in_payout / 10000) / 100)
-    - 1
-) × 100
-```
+* **LP Token Pricing:** Evaluates `getReserves()` or fallback `getTotalAmounts()` on LP contract to compute LP token USD price from underlying reserves and token prices.
 
 ---
 
-## 11. EVM vs Solana
+# 7. Solana Flow
 
-| Feature        | EVM                       | Solana             |
-| -------------- | ------------------------- | ------------------ |
-| Data Source    | Smart Contracts           | Solana Accounts    |
-| RPC Method     | `eth_call` / Multicall V3 | `get_account_info` |
-| Data Format    | ABI-decoded data          | Raw account bytes  |
-| Parsing        | Web3.py / ABI             | Manual parsing     |
-| Address        | `0x...`                   | Base58             |
-| RPC            | Chain-specific RPCs       | Helius RPC         |
-| Token Metadata | Token Contracts           | PDA / Metaplex     |
-
-### EVM Processing
-
-```text
-Bond Contract
-     ↓
-Multicall V3
-     ↓
-Web3.py
-     ↓
-Decoded Contract Data
-     ↓
-Financial Calculation
-```
-
-### Solana Processing
-
-```text
-Bond Accounts
-     ↓
-Solana RPC
-     ↓
-Raw Account Bytes
-     ↓
-struct / Solders
-     ↓
-Financial Calculation
-```
+* **Program ID:** `57GQDhcco4bv4Ngcg7gc6huEYepnGU4PZAGHQCFJmjNW`
+* **Metaplex Program ID:** `metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s`
+* **Binary Unpacking (`struct.unpack_from`):**
+  - Skip 8-byte Anchor discriminator.
+  - `parse_bond_issuance`: `payoutMint`, `principalMint`, `principalMintDecimals`, `payoutMintDecimals`, `feeInPrincipal`, `feeInPayout`, etc.
+  - `parse_bond_pricing`: `total_debt`, `last_decay`, etc.
+  - `parse_bond_term`: `control_variable`, `vesting_end`, `minimum_price`, `max_payout`, `max_total_payout`, `payout_token_initial_supply`.
 
 ---
 
-## 12. Token Price Resolution
+# 8. EVM vs Solana
 
-Token prices are required for calculating bond profitability.
-
-The project uses a unified token-price function:
-
-```text
-get_token_price_unified()
-```
-
-The system can use multiple external providers:
-
-```text
-CoinGecko
-    ↓
-Fallback
-    ↓
-DexScreener
-```
-
-If a required token price cannot be retrieved or is invalid, the bond is excluded from further processing.
+| Aspect | EVM (`process_bond_evm.py`) | Solana (`process_bond_sol.py`) |
+| :--- | :--- | :--- |
+| **Model** | Smart Contract state (`eth_call`) | Account data (`get_account_info`) |
+| **Address** | 40-char Hex (`0x...`) | Base58 Public Key |
+| **RPC** | Infura / Chain RPCs | Helius Solana RPC |
+| **Multicall / Aggregation**| Multicall V3 `tryAggregate` | Single RPC calls per PDA account |
+| **Data Format** | ABI encoded | Raw C-struct binary |
+| **Decimals** | ERC20 `.decimals()` call | Unpacked from `BondIssuance` account |
 
 ---
 
-## 13. Ranking & Notification
+# 9. Bond Field Traceability
 
-After processing valid bonds:
-
-1. Calculate financial metrics.
-2. Validate the results.
-3. Rank bonds by profitability.
-4. Select the highest-ranking opportunities.
-5. Store the results in MySQL.
-6. Send qualifying opportunities to Discord.
-
-The main ranking and notification flow is handled by:
-
-```text
-index.py
-```
+| Final Field | Source File | Source Function | Original Source | Unit |
+| :--- | :--- | :--- | :--- | :--- |
+| `chain` | `execute_data.py` | `fetch_bond_data()` | DB column `chain` | String |
+| `bond_name` | `execute_data.py` | `fetch_bond_data()` | DB column `token_symbol` | String |
+| `bond_address` | `execute_data.py` | `fetch_bond_data()` | DB column `contract_address` | String |
+| `date_time` | `process_bond_...` | `time.gmtime()` | UTC System Clock | `%Y-%m-%d %H:%M:%S` |
+| `min_bonus` | `process_bond_...` | `calc_bonus_with_fee()` | Token prices + bill price | Percentage (%) |
+| `max_bonus` | `process_bond_...` | `calc_bonus_with_fee()` | Token prices + tier price | Percentage (%) |
+| `min_price` | `process_bond_...` | `terms` / `parse_bond_term` | `minimumPrice / 10^dec` | Float |
+| `max_price` | `process_bond_...` | `terms` / `parse_bond_term` | `maxTotalPayout / 10^dec` | Float |
+| `max_buy` | `process_bond_...` | `terms` / `parse_bond_term` | `maxPayout / 10^dec` | Float |
 
 ---
 
-## 14. Database Persistence
+# 10. Token Pricing
 
-Database operations are centralized in:
-
-```text
-execute_data.py
-```
-
-The module handles operations such as:
-
-* `SELECT`
-* `INSERT`
-* `UPDATE`
-* `CREATE`
-
-Centralizing database operations helps separate database logic from blockchain and calculation logic.
+Handled by `get_token_price_unified(chain_name, token_address)` in `helpers.py`:
+1. **Memory Cache:** Checks `price_cache` dict.
+2. **Primary Source:** ApeBond Price API (`https://price-api.ape.bond/realtime/prices`).
+3. **Secondary Source:** CoinGecko API.
+4. **Tertiary Source:** DexScreener API (Filters preferred quotes, removes Z-score outliers > 2, calculates liquidity-weighted average price).
 
 ---
 
-## 15. Discord Notification
+# 11. Bond Price Formula
 
-Qualified bond opportunities are sent through a Discord Webhook.
-
-The notification logic is handled by:
-
-```text
-helpers.py
-```
-
-The webhook is configured through:
-
-```ini
-DISCORD_WEBHOOK_URL=...
-```
-
-Only opportunities satisfying the configured conditions are sent.
+$$\text{bond\_price} = \text{principal\_token\_price} \times \left( \frac{\text{true\_bond\_price}}{10^{18}} \right)$$
 
 ---
 
-## 16. Security
+# 12. Bonus Formula
 
-The following information must never be committed to the repository:
+$$\text{raw\_bonus} = \left( \frac{\text{payout\_token\_price}}{\text{bond\_price}} - 1 \right) \times 100$$
 
-* API keys
-* Helius credentials
-* Discord Webhook URLs
-* Database passwords
-* Private RPC credentials
-* Other secrets stored in `.env`
-
-Recommended `.gitignore`:
-
-```gitignore
-.env
-.venv/
-__pycache__/
-*.pyc
-```
-
-If a secret is accidentally exposed, revoke and regenerate it immediately.
+$$\text{bonus\_with\_fee} = \left[ \left(1 + \frac{\text{raw\_bonus}}{100}\right) \times \left(1 - \frac{\text{fee\_in\_payout} / 10000}{100}\right) - 1 \right] \times 100$$
 
 ---
 
-## 17. Technical Documentation
+# 13. Max Buy Formula
 
-Additional project documentation may include:
-
-| Document                 | Purpose                                             |
-| ------------------------ | --------------------------------------------------- |
-| `bond-business-rules.md` | Business rules, formulas and validation logic       |
-| `bond-data-flow.md`      | Data flow and processing sequence                   |
-| `bond-dependency-map.md` | Module dependencies and responsibilities            |
-| `bond-target-modules.md` | EVM/Solana implementation details and risk analysis |
+$$\text{max\_buy} = \frac{\text{terms.maxPayout}}{10^{\text{payout\_token\_decimals}}}$$
 
 ---
 
-## 18. Project Objective
+# 14. Bond Validation
 
-The main objective of ApeBond Notify is to build an automated monitoring pipeline that can identify and notify users about potentially attractive ApeBond opportunities.
-
-The system combines:
-
-* API synchronization
-* Blockchain data
-* Token price information
-* Financial calculations
-* Database persistence
-* Profitability ranking
-* Automated notifications
-
-The architecture separates **data collection, blockchain processing, calculation, persistence, and notification**, making the system easier to maintain, test, and extend.
+Bonds are skipped if:
+- `status != 'active'`
+- `contract_address` is blacklisted (BG, AST, oABOND, SUSDT, EV, ETAN, GGBR, MASQ)
+- `payout_token_price` or `principal_token_price` is 0 or invalid
+- `bond_price < MIN_BOND_PRICE_THRESHOLD` (`max(1e-12, payout_token_price / 1000)`)
 
 ---
 
-# 🇻🇳 Tiếng Việt
+# 15. Bond Ranking
 
-## 1. Tổng quan dự án
-
-**ApeBond Notify** là hệ thống tự động được xây dựng để giám sát, phân tích, xếp hạng và thông báo các cơ hội Bond từ giao thức **ApeBond**.
-
-Hệ thống hỗ trợ cả **blockchain tương thích EVM** và **Solana**.
-
-### Các chức năng chính
-
-* Đồng bộ danh sách Bond đang hoạt động từ ApeBond.
-* Giám sát dữ liệu Bond trên nhiều blockchain.
-* Đọc dữ liệu Bond trực tiếp từ blockchain.
-* Tính toán các chỉ số tài chính của Bond.
-* Lấy giá token từ các nguồn dữ liệu bên ngoài.
-* Xếp hạng Bond dựa trên khả năng sinh lợi.
-* Lưu lịch sử Bond vào MySQL.
-* Gửi các cơ hội đạt điều kiện thông qua Discord Webhook.
-* Tự động chạy theo khoảng thời gian được cấu hình.
+* **Metric:** `max_bonus`
+* **Direction:** Descending (`reverse=True`)
+* **Top N:** 10
+* **Notification Threshold Filter:** `min_bonus >= notify_threshold` (default `10.0%`)
 
 ---
 
-## 2. Các blockchain được hỗ trợ
+# 16. Database Persistence
 
-### EVM
-
-Hệ thống hỗ trợ các blockchain tương thích EVM như:
-
-* Ethereum
-* BNB Chain
-* Polygon
-* Arbitrum
-* Base
-* Linea
-* Sonic
-* Berachain
-
-### Solana
-
-Bond trên Solana được xử lý thông qua Solana RPC và dữ liệu account trực tiếp trên blockchain.
+* **Engine:** MySQL (`mysql.connector`)
+* **Tables:**
+  1. `list_bond_contract_notify`: Monitored active bonds.
+  2. `bond_history`: Top 10 ranked bond history records.
+  3. `token_info_cache`: Cached ERC20 token decimals & symbols.
 
 ---
 
-## 3. Công nghệ sử dụng
+# 17. Discord Notification
 
-| Thành phần         | Công nghệ                  |
-| ------------------ | -------------------------- |
-| Ngôn ngữ           | Python 3.8+                |
-| Cơ sở dữ liệu      | MySQL                      |
-| Tương tác EVM      | Web3.py, Multicall V3      |
-| Tương tác Solana   | Solana Python SDK, Solders |
-| Quản lý môi trường | python-dotenv              |
-| Xử lý đồng thời    | ThreadPoolExecutor         |
-| Thông báo          | Discord Webhook            |
-| Nguồn giá Token    | CoinGecko / DexScreener    |
+* **Endpoint:** `DISCORD_WEBHOOK_URL` (`config.py`)
+* **Function:** `send_discord_webhook_message()` (`helpers.py`)
+* **Format:** Bulleted list of top bonds satisfying `min_bonus >= threshold`.
 
 ---
 
-## 4. Cấu trúc dự án
+# 18. Retry / Timeout / Cache
 
-```text
-apebond-notify/
-│
-├── index.py
-├── config.py
-├── helpers.py
-├── execute_data.py
-├── process_bond_evm.py
-├── process_bond_sol.py
-│
-├── requirements.txt
-├── .env
-├── .gitignore
-└── README.md
-```
-
-### Trách nhiệm của các module
-
-| Module                | Chức năng                                           |
-| --------------------- | --------------------------------------------------- |
-| `index.py`            | Luồng xử lý chính, đồng bộ, xếp hạng và thông báo   |
-| `process_bond_evm.py` | Lấy và xử lý dữ liệu Bond trên EVM                  |
-| `process_bond_sol.py` | Lấy và xử lý dữ liệu Bond trên Solana               |
-| `execute_data.py`     | Thực hiện các thao tác với MySQL                    |
-| `helpers.py`          | Các hàm dùng chung, lấy giá token và gửi Discord    |
-| `config.py`           | Quản lý biến môi trường, RPC và cấu hình blockchain |
+| Component | Retry | Timeout | Cache |
+| :--- | :--- | :--- | :--- |
+| **ApeBond API** | None | 10s | None |
+| **EVM RPC** | None | Default | None |
+| **Solana RPC** | None | Default | None |
+| **CoinGecko API** | None | 10s | RAM dict `price_cache` |
+| **DexScreener API** | None | 10s | RAM dict `price_cache` |
+| **ABI Explorer** | None | 10s | Disk `abi_cache/*.json` |
+| **Discord Webhook** | None | 5s | None |
 
 ---
 
-## 5. Cài đặt
+# 19. Configuration
 
-### Bước 1 — Clone repository
+Centralized in `config.py` via `python-dotenv`:
 
-```bash
-git clone <your-repository-url>
-cd apebond-notify
-```
+| Variable | Description | Sensitive | Default / Fallback |
+| :--- | :--- | :--- | :--- |
+| `ENV` | Environment (`local` / `server`) | No | `"local"` |
+| `DISCORD_WEBHOOK_URL` | Discord Webhook Endpoint | **Yes** | Webhook URL |
+| `HELIUS_RPC_URL` | Solana RPC Endpoint | **Yes** | Helius RPC URL |
+| `MIN_BONUS_NOTIFY` | Minimum Bonus % for Discord | No | `10.0` |
+| `LOCAL_DB_HOST` | Local MySQL Host | No | `"127.0.0.1"` |
+| `LOCAL_DB_USER` | Local MySQL User | No | `"root"` |
+| `LOCAL_DB_PASS` | Local MySQL Pass | **Yes** | `""` |
 
-### Bước 2 — Tạo Virtual Environment
+---
 
-#### Windows
+# 20. Sensitive Data
 
-```powershell
-python -m venv .venv
-.venv\Scripts\activate
-```
+> [!WARNING]
+> All sensitive tokens, API keys, RPC credentials, and passwords in documentation and repository files must be redacted to `<REDACTED>`.
 
-#### macOS / Linux
+---
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
+# 21. Source Code Functional Classification
 
-### Bước 3 — Cài đặt thư viện
+| File | Primary Role | Core Functions |
+| :--- | :--- | :--- |
+| [`index.py`](file:///c:/apebond-notify/index.py) | Orchestrator & Ranking | `main`, `save_and_notify_top_bonds_by_bonus` |
+| [`config.py`](file:///c:/apebond-notify/config.py) | Configuration | Env loading, Chain mappings |
+| [`execute_data.py`](file:///c:/apebond-notify/execute_data.py) | Persistence & API Sync | `fetch_and_update_bonds`, `fetch_bond_data` |
+| [`process_bond_evm.py`](file:///c:/apebond-notify/process_bond_evm.py) | EVM Reader & Math | `process_bonds`, `process_single_bond_evm` |
+| [`process_bond_sol.py`](file:///c:/apebond-notify/process_bond_sol.py) | Solana Reader & Math | `process_bond_sol`, `process_single_bond_sol` |
+| [`helpers.py`](file:///c:/apebond-notify/helpers.py) | Pricing & Discord | `get_token_price_unified`, `send_discord_webhook_message` |
+| [`call_multicall.py`](file:///c:/apebond-notify/call_multicall.py) | Multicall V3 ABI/Decoders | `decode_address`, `decode_terms`, `decode_true_bond_prices` |
+| [`logging_setup.py`](file:///c:/apebond-notify/logging_setup.py) | Logging | `setup_logger` |
 
-```bash
-pip install -r requirements.txt
-```
+---
 
-Nếu chưa có `requirements.txt`:
+# 22. Dependency Map
 
-```bash
-pip install python-dotenv requests web3 solana==0.36.0 solders mysql-connector-python
+```mermaid
+flowchart TD
+    Index["index.py (Entry Point)"] --> Config["config.py"]
+    Index --> ExecData["execute_data.py"]
+    Index --> ProcessEVM["process_bond_evm.py"]
+    Index --> ProcessSOL["process_bond_sol.py"]
+    Index --> Helpers["helpers.py"]
+    Index --> LogSetup["logging_setup.py"]
+
+    ExecData --> Config
+    ProcessEVM --> Multicall["call_multicall.py"]
+    ProcessEVM --> Helpers
+    ProcessSOL --> Helpers
+    Helpers --> Config
 ```
 
 ---
 
-## 6. Cấu hình
+# 23. Data Flow
 
-Tạo file `.env` tại thư mục gốc của dự án:
-
-```ini
-ENV=local
-
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-
-HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY
-
-MIN_BONUS_NOTIFY=10.0
-
-LOCAL_DB_HOST=localhost
-LOCAL_DB_USER=root
-LOCAL_DB_PASS=
-LOCAL_DB_NAME=apebond-notify
-LOCAL_DB_PORT=3306
-```
-
-### Ý nghĩa các biến
-
-| Biến                  | Mô tả                            |
-| --------------------- | -------------------------------- |
-| `ENV`                 | Môi trường chạy ứng dụng         |
-| `DISCORD_WEBHOOK_URL` | Địa chỉ Discord Webhook          |
-| `HELIUS_RPC_URL`      | RPC dùng để kết nối Solana       |
-| `MIN_BONUS_NOTIFY`    | Bonus tối thiểu để gửi thông báo |
-| `LOCAL_DB_HOST`       | Địa chỉ MySQL                    |
-| `LOCAL_DB_USER`       | Tài khoản MySQL                  |
-| `LOCAL_DB_PASS`       | Mật khẩu MySQL                   |
-| `LOCAL_DB_NAME`       | Tên database                     |
-| `LOCAL_DB_PORT`       | Port MySQL                       |
-
-> **Bảo mật:** Không được commit file `.env` lên Git vì file này có thể chứa API key, RPC credentials, thông tin database và Discord Webhook.
-
----
-
-## 7. Cấu hình Database
-
-Tạo database MySQL:
-
-```sql
-CREATE DATABASE `apebond-notify`;
-```
-
-Ví dụ bảng lưu thông tin Bond:
-
-```sql
-CREATE TABLE IF NOT EXISTS `list_bond_contract_notify` (
-    `id` INT(11) NOT NULL AUTO_INCREMENT,
-    `chain` VARCHAR(20) NOT NULL,
-    `contract_address` VARCHAR(100) NOT NULL,
-    `token_symbol` VARCHAR(50) NOT NULL,
-    `status` VARCHAR(20) DEFAULT 'active',
-    `notify_threshold` FLOAT DEFAULT '10',
-    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `contract_address` (`contract_address`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```mermaid
+flowchart LR
+    API["ApeBond API"] --> ExecData["execute_data.py"]
+    ExecData --> DB_List[("MySQL list_bond_contract_notify")]
+    DB_List --> Index["index.py"]
+    Index --> EVM["process_bond_evm.py"]
+    Index --> SOL["process_bond_sol.py"]
+    EVM_Node["EVM RPC"] --> EVM
+    SOL_Node["Helius SOL RPC"] --> SOL
+    Price_API["Price APIs"] --> Helpers["helpers.py"]
+    Helpers --> EVM
+    Helpers --> SOL
+    EVM --> Index
+    SOL --> Index
+    Index --> DB_Hist[("MySQL bond_history")]
+    Index --> Discord["Discord Webhook"]
 ```
 
 ---
 
-## 8. Chạy chương trình
+# 24. Sequence Diagram
 
-Chạy scanner một lần:
+```mermaid
+sequenceDiagram
+    participant Main as index.py
+    participant DB as MySQL DB
+    participant API as ApeBond API
+    participant EVM as EVM Multicall
+    participant SOL as Solana RPC
+    participant Price as Price Service
+    participant Discord as Discord Webhook
 
-```bash
-python index.py
-```
+    Main->>API: GET /v1/bonds
+    API-->>Main: JSON response
+    Main->>DB: Upsert active bonds
+    Main->>DB: Query active bonds
+    DB-->>Main: Return active bond list
 
-Để tự động chạy lại sau mỗi 10 phút trên Windows PowerShell:
+    par EVM Processing
+        Main->>EVM: tryAggregate() calls
+        EVM-->>Main: Raw return data
+    and Solana Processing
+        Main->>SOL: get_account_info()
+        SOL-->>Main: Raw bytes
+    end
 
-```powershell
-while ($true) {
-    python index.py
-    Start-Sleep -Seconds 600
-}
-```
+    Main->>Price: get_token_price_unified()
+    Price-->>Main: Token prices ($)
 
-### Luồng xử lý hệ thống
+    Note over Main: Compute Net Bonus & Filter
 
-```text
-ApeBond API
-     │
-     ▼
-Đồng bộ Bond Contract
-     │
-     ▼
-MySQL
-     │
-     ▼
-Lấy Bond đang hoạt động
-     │
-     ├───────────────┐
-     ▼               ▼
-    EVM           Solana
-     │               │
-     ▼               ▼
-Dữ liệu On-chain  Account Data
-     │               │
-     └───────┬───────┘
-             ▼
-      Tính giá & chỉ số
-             │
-             ▼
-       Xếp hạng Bonus
-             │
-             ▼
-        Lưu lịch sử
-             │
-             ▼
-      Discord Webhook
+    Main->>DB: Insert Top 10 into bond_history
+    Main->>Discord: Post qualified bonds to Webhook
 ```
 
 ---
 
-## 9. Logic nghiệp vụ chính
+# 25. Target Modules
 
-### Điều kiện xử lý Bond
-
-Một Bond chỉ được xử lý khi:
-
-1. Có trạng thái `active`.
-2. Lấy được dữ liệu cần thiết từ blockchain.
-3. Dữ liệu sau khi parse hợp lệ.
-4. Giá các token cần thiết lớn hơn `0`.
-5. Bonus đạt ngưỡng `MIN_BONUS_NOTIFY`.
-
-Ví dụ:
-
-```ini
-MIN_BONUS_NOTIFY=10.0
-```
-
-có nghĩa là hệ thống chỉ xem xét gửi thông báo đối với các Bond có Bonus đạt tối thiểu **10%**.
-
----
-
-## 10. Các công thức tài chính
-
-### Debt Decay
-
+Proposed modular structure:
 ```text
-Debt Decay =
-(total_debt × time_since_last_decay) / vesting_term
-```
-
-Dùng để xác định phần Debt đã giảm theo thời gian.
-
-### Current Debt
-
-```text
-Current Debt =
-total_debt - debt_decay
-```
-
-Xác định Debt hiện tại của Bond sau khi tính phần Debt đã giảm.
-
-### Bill Price
-
-```text
-Bill Price =
-(control_variable × debt_ratio × 10^16)
-/
-(10^principal_decimals × 10^18)
-```
-
-Giá trị sau khi tính được giới hạn bởi mức giá tối thiểu của Bond.
-
-### True Bond Price
-
-```text
-True Bond Price =
-(bill_price × 10^6)
-/
-(10^6 - fee_in_principal)
-```
-
-Dùng để xác định giá Bond thực tế sau khi tính phí.
-
-### Discount
-
-```text
-Discount =
-((payout_price - bond_price) / payout_price) × 100
-```
-
-Xác định mức chiết khấu của Bond so với giá trị payout.
-
-### Net Bonus
-
-```text
-Net Bonus =
-(
-    (1 + (payout_price / bond_price - 1))
-    × (1 - (fee_in_payout / 10000) / 100)
-    - 1
-) × 100
-```
-
-Net Bonus là một trong những chỉ số chính được sử dụng để đánh giá và xếp hạng Bond.
-
----
-
-## 11. So sánh EVM và Solana
-
-| Đặc điểm          | EVM                       | Solana             |
-| ----------------- | ------------------------- | ------------------ |
-| Nguồn dữ liệu     | Smart Contract            | Solana Account     |
-| Phương thức RPC   | `eth_call` / Multicall V3 | `get_account_info` |
-| Định dạng dữ liệu | ABI-decoded               | Raw account bytes  |
-| Parse dữ liệu     | Web3.py / ABI             | Parse thủ công     |
-| Địa chỉ           | `0x...`                   | Base58             |
-| RPC               | RPC riêng theo Chain      | Helius RPC         |
-| Token Metadata    | Token Contract            | PDA / Metaplex     |
-
-### Luồng EVM
-
-```text
-Bond Contract
-     ↓
-Multicall V3
-     ↓
-Web3.py
-     ↓
-Dữ liệu Contract đã Decode
-     ↓
-Tính toán tài chính
-```
-
-### Luồng Solana
-
-```text
-Bond Account
-     ↓
-Solana RPC
-     ↓
-Raw Account Bytes
-     ↓
-struct / Solders
-     ↓
-Tính toán tài chính
+apebond_notify/
+├── main.py
+├── config/
+│   └── settings.py
+├── discovery/
+│   └── apebond_api.py
+├── blockchain/
+│   ├── evm/
+│   └── solana/
+├── pricing/
+│   └── price_service.py
+├── domain/
+│   ├── calculations.py
+│   ├── validation.py
+│   └── ranking.py
+├── persistence/
+│   └── repositories.py
+└── notification/
+    └── discord_notifier.py
 ```
 
 ---
 
-## 12. Lấy giá Token
+# 26. Formula Table
 
-Giá Token là dữ liệu cần thiết để tính toán hiệu quả của Bond.
-
-Hệ thống sử dụng hàm thống nhất:
-
-```text
-get_token_price_unified()
-```
-
-Các nguồn giá có thể được sử dụng theo cơ chế fallback:
-
-```text
-CoinGecko
-    ↓
-Fallback
-    ↓
-DexScreener
-```
-
-Nếu không thể lấy được giá Token cần thiết hoặc giá không hợp lệ, Bond sẽ bị loại khỏi quá trình xử lý.
+| Name | Inputs | Output | Unit | Fallback |
+| :--- | :--- | :--- | :--- | :--- |
+| **Debt Decay** | `total_debt`, `last_decay`, `current_time`, `vesting_term` | `debt_decay` | Raw Units | Return `total_debt` if `vesting_term == 0` |
+| **Bill Price** | `control_variable`, `debt_ratio`, `principal_decimals` | `bill_price` | Raw Units | Clamp to `minimum_price` |
+| **True Bond Price**| `bill_price`, `fee_in_principal` | `true_bond_price` | Scale 1e6 | Raw calculation |
+| **Bond Price** | `principal_token_price`, `true_bond_price` | `bond_price` | USD ($) | Skip if `< MIN_BOND_PRICE_THRESHOLD` |
+| **Net Bonus** | `bonus`, `fee_in_payout` | `min_bonus` / `max_bonus` | Percentage (%) | `calc_bonus_with_fee()` |
 
 ---
 
-## 13. Xếp hạng và thông báo
+# 27. Calculation Examples
 
-Sau khi xử lý các Bond hợp lệ, hệ thống sẽ:
+Given:
+- `payout_token_price` = $2.00
+- `principal_token_price` = $100.00
+- `true_bill_price` = $15,000,000,000,000,000$ ($0.015 \times 10^{18}$)
+- `fee_in_payout` = $200$ (2%)
 
-1. Tính toán các chỉ số tài chính.
-2. Kiểm tra tính hợp lệ của dữ liệu.
-3. Xếp hạng Bond theo khả năng sinh lợi.
-4. Chọn các cơ hội có thứ hạng cao.
-5. Lưu kết quả vào MySQL.
-6. Gửi các Bond đạt điều kiện lên Discord.
-
-Luồng xếp hạng và thông báo chính nằm trong:
-
-```text
-index.py
-```
+Calculations:
+1. $\text{bond\_price} = 100.00 \times 0.015 = \$1.50$
+2. $\text{raw\_bonus} = \left(\frac{2.00}{1.50} - 1\right) \times 100 = 33.33\%$
+3. $\text{bonus\_with\_fee} = \left[(1 + 0.3333) \times \left(1 - \frac{0.02}{100}\right) - 1\right] \times 100 = 33.30\%$
 
 ---
 
-## 14. Lưu trữ Database
+# 28. Problems / Risks
 
-Các thao tác với MySQL được tập trung trong:
-
-```text
-execute_data.py
-```
-
-Module này xử lý các thao tác như:
-
-* `SELECT`
-* `INSERT`
-* `UPDATE`
-* `CREATE`
-
-Việc tách riêng database logic giúp giảm sự phụ thuộc giữa xử lý blockchain, tính toán và lưu trữ dữ liệu.
+1. **Critical:** `NameError: name 'get_connection' is not defined` in `index.py` L33.
+2. **High:** Solana bond sync skipped (`if chain_id == 10143: continue`) in `execute_data.py` L251.
+3. **High:** `NameError: name 'API_URLS' is not defined` in `process_bond_evm.py` L27.
+4. **Critical:** Hardcoded API keys and secrets in `config.py` and `call_multicall.py`.
+5. **Medium:** Duplicate pricing logic in `get_price.py` vs `helpers.py`.
+6. **High:** Missing retry/backoff wrappers around RPC and Webhook network requests.
+7. **Medium:** `fetch_bond_data` SQL query lacks `WHERE status = 'active'`.
+8. **Medium:** RAM `price_cache` lacks TTL/expiration policy.
 
 ---
 
-## 15. Discord Notification
+# 29. Questions to Confirm
 
-Các cơ hội Bond đạt điều kiện sẽ được gửi thông qua Discord Webhook.
-
-Logic gửi thông báo nằm trong:
-
-```text
-helpers.py
-```
-
-Webhook được cấu hình bằng:
-
-```ini
-DISCORD_WEBHOOK_URL=...
-```
-
-Chỉ những Bond thỏa mãn các điều kiện đã cấu hình mới được gửi thông báo.
+1. **Solana Sync:** Should Solana bonds be automatically synced from API ApeBond or managed manually in DB?
+2. **Pricing Priority:** Is the current fallback hierarchy (`ApeBond -> CoinGecko -> DexScreener`) authoritative?
+3. **Cache TTL:** What is the preferred TTL for RAM price caching (e.g. 5 minutes)?
+4. **Vesting Term 0:** Is returning `total_debt` when `vesting_term == 0` standard protocol behavior?
+5. **Per-Chain Thresholds:** Should `notify_threshold` be configurable per chain or kept global?
 
 ---
 
-## 16. Bảo mật
+# 30. Acceptance Criteria
 
-Không được commit các thông tin sau lên repository:
-
-* API Key
-* Helius credentials
-* Discord Webhook URL
-* Database password
-* Private RPC credentials
-* Các thông tin bảo mật khác trong `.env`
-
-`.gitignore` nên chứa:
-
-```gitignore
-.env
-.venv/
-__pycache__/
-*.pyc
-```
-
-Nếu thông tin bảo mật bị lộ, cần **thu hồi và tạo lại credential mới ngay lập tức**.
+* [x] Entry point & runtime activation mapped.
+* [x] EVM & Solana flows completely traced.
+* [x] EVM vs Solana differences documented.
+* [x] Field traceability & token pricing verified against code.
+* [x] Financial formulas, validation, and ranking mapped 100% to actual Python code.
+* [x] Database, Discord, Retry, and Config documented.
+* [x] Secrets redacted.
+* [x] Mermaid diagrams (Dependency Map, Data Flow, Sequence Diagram) included.
+* [x] Target module structure proposed.
+* [x] Real codebase bugs & risks identified.
 
 ---
 
-## 17. Tài liệu kỹ thuật
+# 31. Final Conclusion
 
-Các tài liệu phân tích bổ sung của dự án:
-
-| File                     | Nội dung                                      |
-| ------------------------ | --------------------------------------------- |
-| `bond-business-rules.md` | Business rules, công thức và điều kiện xử lý  |
-| `bond-data-flow.md`      | Luồng dữ liệu và trình tự xử lý               |
-| `bond-dependency-map.md` | Dependency và trách nhiệm của từng module     |
-| `bond-target-modules.md` | Chi tiết xử lý EVM/Solana và phân tích rủi ro |
-
----
-
-## 18. Mục tiêu dự án
-
-Mục tiêu chính của **ApeBond Notify** là xây dựng một pipeline tự động có khả năng giám sát và phát hiện các cơ hội Bond tiềm năng trên ApeBond.
-
-Hệ thống kết hợp:
-
-* Đồng bộ dữ liệu từ API.
-* Dữ liệu trực tiếp từ blockchain.
-* Dữ liệu giá Token.
-* Tính toán các chỉ số tài chính.
-* Lưu trữ dữ liệu bằng MySQL.
-* Xếp hạng cơ hội theo khả năng sinh lợi.
-* Gửi thông báo tự động.
-
-Kiến trúc hệ thống phân tách rõ các nhóm chức năng:
-
-**Data Collection → Blockchain Processing → Calculation → Persistence → Notification**
-
-Điều này giúp hệ thống dễ bảo trì, kiểm thử và mở rộng trong tương lai.
-
----
-
-# 📌 Summary / Tóm tắt
-
-```text
-Fetch
-  ↓
-Validate
-  ↓
-Read On-chain Data
-  ↓
-Calculate
-  ↓
-Rank
-  ↓
-Store
-  ↓
-Notify
-```
-
-**ApeBond Notify — Automated Bond Monitoring & Analysis System**
-
-**ApeBond Notify — Hệ thống tự động giám sát và phân tích Bond**
+The `apebond-notify` application is an effective automated bond scanner, but currently suffers from tight coupling between blockchain state readers and financial math, hardcoded secrets, duplicate pricing services, and critical missing imports in `index.py` and `process_bond_evm.py`. Refactoring into the proposed target modular architecture will isolate blockchain reading from business rules, enhance maintainability, and stabilize system execution.
