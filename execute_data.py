@@ -1,6 +1,11 @@
+"""
+Database operations for bond notification system.
+Handles connection, table creation, bond sync, and history storage.
+"""
+
 import mysql.connector
 import gc
-from datetime import datetime,timedelta
+from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
 import requests
@@ -9,11 +14,18 @@ from logging_setup import log
 
 load_dotenv()
 
-def get_db_config():
-    env = os.getenv("ENV")
 
-    if env == "local":
-        DB_CONFIG = {
+def get_db_config():
+    """
+    Get database configuration from environment variables.
+    
+    Returns:
+        dict: Database connection parameters
+    """
+    env = os.getenv("ENV", "local")
+
+    if env == "server":
+        db_config = {
             "host": os.getenv("SERVER_DB_HOST"),
             "user": os.getenv("SERVER_DB_USER"),
             "password": os.getenv("SERVER_DB_PASS"),
@@ -22,71 +34,83 @@ def get_db_config():
             "ssl_disabled": os.getenv("SERVER_DB_SSL_DISABLED", "False").lower() == "False"
         }
     else:
-        DB_CONFIG = {
+        db_config = {
             "host": os.getenv("LOCAL_DB_HOST"),
             "user": os.getenv("LOCAL_DB_USER"),
             "password": os.getenv("LOCAL_DB_PASS"),
             "database": os.getenv("LOCAL_DB_NAME"),
             "port": int(os.getenv("LOCAL_DB_PORT", 3306)),
-            "ssl_disabled": os.getenv("LOCAL_DB_SSL_DISABLED", "False").lower() == "False"
+            "ssl_disabled": os.getenv("LOCAL_DB_SSL_DISABLED", "True").lower() == "True"
         }
-        
-    return DB_CONFIG
 
-# Connect to MySQL database
+    return db_config
+
+
 def get_connection():
-    DB_CONFIG = get_db_config()
-    if DB_CONFIG:
-        return mysql.connector.connect(**DB_CONFIG)
+    """
+    Establish MySQL database connection.
+    
+    Returns:
+        mysql.connector.connection: Database connection object
+    """
+    db_config = get_db_config()
+    if db_config:
+        return mysql.connector.connect(**db_config)
+    return None
 
-DB_CONFIG = get_db_config()
 
-# Create database and table if not exist
 def create_database_and_table():
-    temp_config = DB_CONFIG.copy()
+    """
+    Create database and required tables if they don't exist.
+    Tables: bond_history, list_bond_contract_notify, token_info_cache
+    """
+    db_config = get_db_config()
+    temp_config = db_config.copy()
     temp_config.pop("database")
 
     try:
         connection = mysql.connector.connect(**temp_config)
         cursor = connection.cursor()
 
+        # Create database if not exists
         cursor.execute("SHOW DATABASES")
         databases = [db[0] for db in cursor.fetchall()]
 
-        if DB_CONFIG['database'] in databases:
-            print(f"Database {DB_CONFIG['database']} already exists.")
+        if db_config['database'] in databases:
+            print(f"Database {db_config['database']} already exists.")
         else:
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_CONFIG['database']}")
-            print(f"Database {DB_CONFIG['database']} newly created")
-        
-        # Clear database list after use
-        del databases  
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_config['database']}")
+            print(f"Database {db_config['database']} newly created")
 
-        connection.database = DB_CONFIG['database']
+        del databases
+
+        connection.database = db_config['database']
 
         cursor.execute("SHOW TABLES")
         tables = [table[0] for table in cursor.fetchall()]
 
+        # Create bond_history table
         if "bond_history" in tables:
             print("Table bond_history already exists.")
         else:
             create_table_query = """
                 CREATE TABLE IF NOT EXISTS bond_history(
-                        id INT AUTO_INCREMENT PRIMARY KEY,
-                        bond_name VARCHAR(255) NOT NULL,
-                        bond_chain VARCHAR(50) NOT NULL,
-                        contract_address VARCHAR(255) NOT NULL,
-                        date_time DATETIME NOT NULL,
-                        min_bonus DECIMAL(10, 2) NOT NULL,
-                        max_bonus DECIMAL(10, 2) NOT NULL,
-                        min_price DECIMAL(18, 2) NOT NULL,
-                        max_price DECIMAL(18, 2) NOT NULL,
-                        max_buy DECIMAL(18, 2) NOT NULL
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    bond_name VARCHAR(255) NOT NULL,
+                    bond_chain VARCHAR(50) NOT NULL,
+                    contract_address VARCHAR(255) NOT NULL,
+                    date_time DATETIME NOT NULL,
+                    min_bonus DECIMAL(10, 2) NOT NULL,
+                    max_bonus DECIMAL(10, 2) NOT NULL,
+                    min_price DECIMAL(18, 2) NOT NULL,
+                    max_price DECIMAL(18, 2) NOT NULL,
+                    max_buy DECIMAL(18, 2) NOT NULL
                 ) ENGINE=InnoDB;
             """
             cursor.execute(create_table_query)
             print("Table bond_history newly created")
-            
+
+        # Create list_bond_contract_notify table
         if "list_bond_contract_notify" in tables:
             print("Table list_bond_contract_notify already exists.")
         else:
@@ -102,7 +126,8 @@ def create_database_and_table():
             """
             cursor.execute(create_table_query)
             print("Table list_bond_contract_notify newly created")
-        
+
+        # Create token_info_cache table
         if "token_info_cache" in tables:
             print("Table token_info_cache already exists.")
         else:
@@ -118,25 +143,32 @@ def create_database_and_table():
             """
             cursor.execute(create_token_table)
             print("Table token_info_cache newly created")
-        
-        # Clear table list after use
-        del tables 
 
+        del tables
         connection.commit()
 
     except mysql.connector.Error as e:
-        error_message_sql = f"Error creating database/table: {e}"
-        print(error_message_sql)
-    
+        print(f"Error creating database/table: {e}")
+
     finally:
         if 'cursor' in locals():
             cursor.close()
         if 'connection' in locals():
             connection.close()
-    
+
     gc.collect()
 
+
 def fetch_bond_data(chain_name):
+    """
+    Fetch bond data from database by chain type.
+    
+    Args:
+        chain_name (str): 'SOL' or 'EVM'
+    
+    Returns:
+        list: List of bond records
+    """
     try:
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
@@ -168,54 +200,68 @@ def fetch_bond_data(chain_name):
         if 'conn' in locals():
             conn.close()
 
+
 def fetch_and_update_bonds():
     url = "https://realtime-api.ape.bond/bonds"
     conn = None
     cursor = None
-    
+
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         bond_data = response.json()
-        
-        bonds_list = bond_data.get('bonds', [])   
-        
+
+        bonds_list = bond_data.get('bonds', [])
+
         conn = get_connection()
         cursor = conn.cursor()
-        
+
         api_contract_addresses = set()
         supported_chains = set()
-        
+
         for bond in bonds_list:
             is_active = not bond.get('soldOut', True)
             status = 'active' if is_active else 'sold'
 
-            # Chỉ xử lý bond active
             if status != 'active':
                 continue
-            
+
+            # ===== SỬA PHẦN NÀY =====
+            # Lấy chainId từ cấu trúc mới
             chain_id = bond.get('chainId')
+            
+            # Nếu không có chainId, thử lấy từ index hoặc các field khác
+            if chain_id is None:
+                # Thử lấy từ billAddress (nếu có)
+                bill_address = bond.get('billAddress', '')
+                # Hoặc có thể hardcode cho SOL
+                # SOL chainId là 10143
+                pass
+            
             chain = ID_CHAIN_MAP.get(chain_id)
-            
+
             if chain is None:
-                continue
-            
-            # Skip specific chain if needed (like 10143 if it's meant to be skipped)
+                # Nếu chain_id không có trong map, thử kiểm tra đặc biệt
+                if chain_id == 10143:
+                    chain = "SOL"
+                else:
+                    log.warning(f"Unknown chain ID: {chain_id}")
+                    continue
+
             if chain_id == 10143:
                 continue
-                
+
             supported_chains.add(chain)
-            
+
             contract_address = bond.get('billAddress')
             token_symbol = bond.get('payoutTokenName', '')
-            
+
             if not contract_address:
-                continue 
-            
-            # Add to set to track
+                continue
+
             contract_address_lower = contract_address.lower()
             api_contract_addresses.add(contract_address_lower)
-            
+
             query = """
                 INSERT INTO list_bond_contract_notify (chain, contract_address, token_symbol, status)
                 VALUES (%s, %s, %s, %s)
@@ -228,14 +274,13 @@ def fetch_and_update_bonds():
             value = (chain, contract_address_lower, token_symbol, status)
             cursor.execute(query, value)
 
+        # Mark missing bonds as sold
         if supported_chains:
-            # Lấy danh sách các bond hiện có trong DB thuộc các chain đã xử lý
             placeholders = ', '.join(['%s'] * len(supported_chains))
             query = f"SELECT LOWER(contract_address) FROM list_bond_contract_notify WHERE status = 'active' AND chain IN ({placeholders})"
             cursor.execute(query, list(supported_chains))
             db_bonds = set(row[0] for row in cursor.fetchall())
 
-            # Tìm các bond không còn trong API → cập nhật trạng thái thành 'sold'
             missing_bonds = db_bonds - api_contract_addresses
             if missing_bonds:
                 log.info(f"Found {len(missing_bonds)} bonds to mark as sold for chains {supported_chains}")
@@ -245,10 +290,10 @@ def fetch_and_update_bonds():
                         SET status = 'sold', updated_at = CURRENT_TIMESTAMP
                         WHERE LOWER(contract_address) = %s
                     """, (old_contract,))
-        
+
         conn.commit()
-        log.info(f"Successfully updated bonds from API.")
-    
+        log.info("Successfully updated bonds from API.")
+
     except mysql.connector.Error as e:
         if conn:
             conn.rollback()

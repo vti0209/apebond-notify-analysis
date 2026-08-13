@@ -319,7 +319,7 @@ def calc_bonus_with_fee(bonus, fee_in_payout):
     return ((1 + bonus / 100) * (1 - (fee_in_payout/10000) / 100) - 1) * 100
 
 def process_single_bond_evm(bond):
-    log.info(f"✅ Processing bond: {bond.get('chain')} - {bond.get('contract_address')} - {bond.get('token_symbol')}")
+    log.info(f"Processing bond: {bond.get('chain')} - {bond.get('contract_address')} - {bond.get('token_symbol')}")
     chain_name = bond.get("chain")
     bond_address = bond.get("contract_address")
     bond_name = bond.get("token_symbol")
@@ -327,8 +327,20 @@ def process_single_bond_evm(bond):
 
     if status != "active":
         return None
-        
-    # Connect to database per thread to avoid connection leak and thread safety issues
+    skip_addresses = [
+        '0x4075b614e75cb4aed6c8de4b0180e3d2bede4308',  # BG
+        '0x3b4e1a2d575fb77fc10fefe182b8e4b01d3563f6',  # AST
+        '0xc22760166957e94fac54a8b354c909d6d5eb18d1',  # oABOND
+        '0x6e0155343c079ee06cef2209b12bee2cc8ec785b',  # SUSDT
+        '0x0b62bd499cd80552b1f55c97fb27ac9e13bacc9a',  # EV
+        '0xcf177f0c6629b5cdad23a31a750821fea0e7c439',  # ETAN
+        '0xba80c4bd8d297aaadf0cf3dbe65944ab0d24c258',  # GGBR
+        '0x373f3a5d300f61cd299036ba434b6d3a130a7847'   # MASQ
+    ]
+    if bond_address.lower() in [addr.lower() for addr in skip_addresses]:
+        log.info(f"Skipping known problematic bond: {bond_name}")
+        return None
+    
     connection = mysql.connector.connect(**DB_CONFIG)
     
     try:
