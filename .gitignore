@@ -1,0 +1,12 @@
+# Local configuration contains API tokens, webhook URLs, and database credentials.
+config.py
+
+# Generated/runtime artifacts
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+
+abi_cache/
+logs/
