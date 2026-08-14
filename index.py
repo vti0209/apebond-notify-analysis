@@ -12,7 +12,7 @@ if sys.stdout.encoding.lower() != 'utf-8':
 
 from process_bond_evm import process_bonds
 from process_bond_sol import process_bond_sol
-from execute_data import create_database_and_table, fetch_bond_data, fetch_and_update_bonds
+from execute_data import create_database_and_table, fetch_bond_data, fetch_and_update_bonds, get_connection
 from config import MIN_BONUS_NOTIFY
 import gc
 from helpers import sleep_until_wakeup, set_bedtime, send_discord_webhook_message

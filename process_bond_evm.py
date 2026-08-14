@@ -6,7 +6,7 @@ import time
 import os
 import tempfile
 from web3 import Web3
-from config import RPC_URLS, API_KEYS, DB_CONFIG, MULTICALL_V3_ADDRESS, CHAIN_IDS
+from config import RPC_URLS, API_KEYS, API_URLS, DB_CONFIG, MULTICALL_V3_ADDRESS, CHAIN_IDS
 from call_multicall import MULTICALL_V3_ABI, decode_address, decode_uint256, decode_terms, decode_true_bond_prices
 from helpers import get_token_price_unified, get_pair_token_price_dexscreener
 import concurrent.futures
@@ -17,54 +17,63 @@ def get_abi(chain, bond_address):
     os.makedirs(ABI_CACHE_DIR, exist_ok=True)
     cache_file = os.path.join(ABI_CACHE_DIR, f"{chain.lower()}_{bond_address.lower()}.json")
 
-    # Nếu file cache ABI đã có -> load lên
+    # Đọc từ cache nếu có
     if os.path.exists(cache_file):
-        with open(cache_file, "r") as f:
-            # print("✅ Đọc ABI từ file cache")
-            return json.load(f)
+        try:
+            with open(cache_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
 
-    # Nếu chưa có, gọi API
+    # Nếu chain không có trong API_URLS hoặc API_KEYS -> dùng default ABI
     if chain not in API_URLS or chain not in API_KEYS:
-        log.error(f"❌ No API URL or API Key for {chain}")
-        return None
+        return get_default_bond_abi()
 
-    etherscan_url = API_URLS[chain]
+    api_url = API_URLS[chain]
     params = {
         "module": "contract",
         "action": "getabi",
         "address": bond_address,
-        "apikey": API_KEYS[chain]
+        "apikey": API_KEYS.get(chain, "")
     }
 
     try:
-        response = requests.get(etherscan_url, params=params, timeout=10)
-        response_json = response.json()
-
-        if response.status_code == 200 and response_json["status"] == "1":
+        response = requests.get(api_url, params=params, timeout=5)
+        if response.status_code == 200:
             try:
-                abi = json.loads(response_json["result"])
-                
-                # Ghi ra file tạm
-                with tempfile.NamedTemporaryFile("w", delete=False, dir=ABI_CACHE_DIR, suffix=".tmp") as tmp_file:
-                    json.dump(abi, tmp_file)
-                    temp_name = tmp_file.name
+                data = response.json()
+                if isinstance(data, dict) and data.get("status") == "1" and data.get("result"):
+                    abi = json.loads(data["result"])
+                    with open(cache_file, "w") as f:
+                        json.dump(abi, f)
+                    log.info(f"ABI cached: {cache_file}")
+                    return abi
+            except Exception:
+                pass
+    except Exception:
+        pass
 
-                # Đổi tên thành file chính thức (atomic operation)
-                os.replace(temp_name, cache_file)
-                log.info(f"✅ ABI cached to: {cache_file}")
+    return get_default_bond_abi()
 
-                return abi
 
-            except json.JSONDecodeError:
-                log.error("❌ Error while decoding JSON ABI")
-                return None
-        else:
-            log.error(f"❌ Don't get ABI: {response_json['result']}")
-            return None
 
-    except requests.exceptions.RequestException as e:
-        log.error(f"❌ Error retrieving contract ABI: {e}")
-        return None
+def get_default_bond_abi():
+    """Return default comprehensive ABI for bond contracts, ERC20 tokens, and LP pairs"""
+    return [
+        {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "symbol", "outputs": [{"name": "", "type": "string"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "name", "outputs": [{"name": "", "type": "string"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "totalSupply", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "payoutToken", "outputs": [{"name": "", "type": "address"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "principalToken", "outputs": [{"name": "", "type": "address"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "trueBillPrice", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "terms", "outputs": [{"name": "", "type": "tuple"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "feeInPayout", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "getReserves", "outputs": [{"name": "", "type": "uint112"}, {"name": "", "type": "uint112"}, {"name": "", "type": "uint32"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "getTotalAmounts", "outputs": [{"name": "", "type": "uint256"}, {"name": "", "type": "uint256"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "token0", "outputs": [{"name": "", "type": "address"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "token1", "outputs": [{"name": "", "type": "address"}], "type": "function"},
+    ]
 
 def get_target_token_address(web3: Web3, token_address: str) -> str:
     token_address = web3.to_checksum_address(token_address)
@@ -116,9 +125,19 @@ def load_abi(file_path):
     with open(file_path, 'r') as f:
         return json.load(f)
 
-def get_data_bond_contract(chain, bond_address, multicall_v3_address=MULTICALL_V3_ADDRESS):
+def get_data_bond_contract(chain, bond_address, multicall_v3_address=None):
     web3 = get_web3_connection(chain)
-    cs_bond_address = Web3.to_checksum_address(bond_address)
+    cs_bond_address = safe_to_checksum(bond_address)
+    
+    if not multicall_v3_address:
+        multicall_v3_address = MULTICALL_V3_ADDRESS
+
+    if isinstance(multicall_v3_address, dict):
+        target_multicall = multicall_v3_address.get(chain, "0xcA11bde05977b3631167028862bE2a173976CA11")
+    else:
+        target_multicall = multicall_v3_address
+
+    cs_multicall_address = safe_to_checksum(target_multicall)
     
     # Tạo callData cho các hàm
     payout_sig = web3.keccak(text="payoutToken()")[:4]
@@ -137,7 +156,8 @@ def get_data_bond_contract(chain, bond_address, multicall_v3_address=MULTICALL_V
         {"target": cs_bond_address, "callData": true_bond_price_tier_sig},
     ]
     
-    contract = get_contract(web3, Web3.to_checksum_address(multicall_v3_address), abi=MULTICALL_V3_ABI)
+    contract = get_contract(web3, cs_multicall_address, abi=MULTICALL_V3_ABI)
+
     results = contract.functions.tryAggregate(False, calls).call()
     
     # Decode kết quả (giải mã địa chỉ ERC20 từ 32 byte returnData)
@@ -152,6 +172,22 @@ def get_data_bond_contract(chain, bond_address, multicall_v3_address=MULTICALL_V
         true_bond_price_tier = None  # fallback nếu fail
         
     return payout_token, principal_token, true_bill_price, true_bond_price_tier, terms, fee_in_payout
+
+def safe_to_checksum(addr):
+    """
+    Safely convert address to checksum string, handling dicts, bytes, strings, or None.
+    Returns checksummed 0x string or None.
+    """
+    if not addr:
+        return None
+    if isinstance(addr, (dict, list, tuple)):
+        addr = decode_address(addr)
+    if not addr or not isinstance(addr, (str, bytes, bytearray)):
+        return None
+    try:
+        return Web3.to_checksum_address(addr)
+    except Exception:
+        return None
 
 def get_token_decimals_and_symbol(chain, token_address, resolve_proxy=False):
     web3 = get_web3_connection(chain)
@@ -327,27 +363,39 @@ def process_single_bond_evm(bond):
 
     if status != "active":
         return None
-    skip_addresses = [
-        '0x4075b614e75cb4aed6c8de4b0180e3d2bede4308',  # BG
-        '0x3b4e1a2d575fb77fc10fefe182b8e4b01d3563f6',  # AST
-        '0xc22760166957e94fac54a8b354c909d6d5eb18d1',  # oABOND
-        '0x6e0155343c079ee06cef2209b12bee2cc8ec785b',  # SUSDT
-        '0x0b62bd499cd80552b1f55c97fb27ac9e13bacc9a',  # EV
-        '0xcf177f0c6629b5cdad23a31a750821fea0e7c439',  # ETAN
-        '0xba80c4bd8d297aaadf0cf3dbe65944ab0d24c258',  # GGBR
-        '0x373f3a5d300f61cd299036ba434b6d3a130a7847'   # MASQ
-    ]
-    if bond_address.lower() in [addr.lower() for addr in skip_addresses]:
-        log.info(f"Skipping known problematic bond: {bond_name}")
-        return None
+    # skip_addresses = [
+    #     '0x4075b614e75cb4aed6c8de4b0180e3d2bede4308',  # BG
+    #     '0x3b4e1a2d575fb77fc10fefe182b8e4b01d3563f6',  # AST
+    #     '0xc22760166957e94fac54a8b354c909d6d5eb18d1',  # oABOND
+    #     '0x6e0155343c079ee06cef2209b12bee2cc8ec785b',  # SUSDT
+    #     '0x0b62bd499cd80552b1f55c97fb27ac9e13bacc9a',  # EV
+    #     '0xcf177f0c6629b5cdad23a31a750821fea0e7c439',  # ETAN
+    #     '0xba80c4bd8d297aaadf0cf3dbe65944ab0d24c258',  # GGBR
+    #     '0x373f3a5d300f61cd299036ba434b6d3a130a7847'   # MASQ
+    # ]
+    # if bond_address.lower() in [addr.lower() for addr in skip_addresses]:
+    #     log.info(f"Skipping known problematic bond: {bond_name}")
+    #     return None
     
     connection = mysql.connector.connect(**DB_CONFIG)
     
     try:
-        cs_bond_address = Web3.to_checksum_address(bond_address)
+        cs_bond_address = safe_to_checksum(bond_address)
+        if not cs_bond_address:
+            log.warning(f"⚠️ Invalid bond_address: {bond_address}")
+            return None
+
         payout_token, principal_token, true_bill_price, true_bond_price_tier, terms, fee_in_payout = get_data_bond_contract(chain_name, cs_bond_address)
-        payout_token_decimal, payout_token_symbol = get_token_info_cached(chain_name, Web3.to_checksum_address(payout_token), db_conn=connection, resolve_proxy=True) 
-        principal_token_data = get_data_principal_token(chain_name, Web3.to_checksum_address(principal_token), db_conn=connection)
+        
+        cs_payout_token = safe_to_checksum(payout_token)
+        cs_principal_token = safe_to_checksum(principal_token)
+
+        if not cs_payout_token or not cs_principal_token:
+            log.warning(f"⚠️ Could not decode valid payout_token ({payout_token}) or principal_token ({principal_token}) for bond {bond_name} on {chain_name}")
+            return None
+
+        payout_token_decimal, payout_token_symbol = get_token_info_cached(chain_name, cs_payout_token, db_conn=connection, resolve_proxy=True) 
+        principal_token_data = get_data_principal_token(chain_name, cs_principal_token, db_conn=connection)
 
         principal_token_price = 0
         principal_token_decimal = 0
@@ -442,6 +490,8 @@ def process_single_bond_evm(bond):
     except Exception as inner_e:
         log.error(f"⚠️ Error while processing bond {bond_name} on {chain_name}: {inner_e}")
         return None
+
+
     finally:
         if 'connection' in locals() and connection.is_connected():
             connection.close()

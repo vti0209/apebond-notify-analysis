@@ -22,28 +22,29 @@ def get_db_config():
     Returns:
         dict: Database connection parameters
     """
-    env = os.getenv("ENV", "local")
+    env = os.getenv("ENV", "local").lower()
 
     if env == "server":
         db_config = {
-            "host": os.getenv("SERVER_DB_HOST"),
-            "user": os.getenv("SERVER_DB_USER"),
-            "password": os.getenv("SERVER_DB_PASS"),
-            "database": os.getenv("SERVER_DB_NAME"),
+            "host": os.getenv("SERVER_DB_HOST", "127.0.0.1"),
+            "user": os.getenv("SERVER_DB_USER", "apebond"),
+            "password": os.getenv("SERVER_DB_PASS", ""),
+            "database": os.getenv("SERVER_DB_NAME", "apebond-notify"),
             "port": int(os.getenv("SERVER_DB_PORT", 3307)),
-            "ssl_disabled": os.getenv("SERVER_DB_SSL_DISABLED", "False").lower() == "False"
+            "ssl_disabled": os.getenv("SERVER_DB_SSL_DISABLED", "True").lower() in ["true", "1", "yes"]
         }
     else:
         db_config = {
-            "host": os.getenv("LOCAL_DB_HOST"),
-            "user": os.getenv("LOCAL_DB_USER"),
-            "password": os.getenv("LOCAL_DB_PASS"),
-            "database": os.getenv("LOCAL_DB_NAME"),
+            "host": os.getenv("LOCAL_DB_HOST", "127.0.0.1"),
+            "user": os.getenv("LOCAL_DB_USER", "root"),
+            "password": os.getenv("LOCAL_DB_PASS", ""),
+            "database": os.getenv("LOCAL_DB_NAME", "apebond-notify"),
             "port": int(os.getenv("LOCAL_DB_PORT", 3306)),
-            "ssl_disabled": os.getenv("LOCAL_DB_SSL_DISABLED", "True").lower() == "True"
+            "ssl_disabled": os.getenv("LOCAL_DB_SSL_DISABLED", "True").lower() in ["true", "1", "yes"]
         }
 
     return db_config
+
 
 
 def get_connection():
@@ -92,6 +93,24 @@ def create_database_and_table():
         # Create bond_history table
         if "bond_history" in tables:
             print("Table bond_history already exists.")
+            cursor.execute("DESCRIBE bond_history")
+            existing_cols = [col[0] for col in cursor.fetchall()]
+            required_cols = {
+                'bond_name': 'VARCHAR(255)',
+                'bond_chain': 'VARCHAR(50)',
+                'date_time': 'DATETIME',
+                'min_bonus': 'DECIMAL(10, 2)',
+                'max_bonus': 'DECIMAL(10, 2)',
+                'min_price': 'DECIMAL(38, 8)',
+                'max_price': 'DECIMAL(38, 8)'
+            }
+            for col_name, col_type in required_cols.items():
+                if col_name not in existing_cols:
+                    try:
+                        cursor.execute(f"ALTER TABLE bond_history ADD COLUMN {col_name} {col_type}")
+                        print(f"Added column {col_name} to bond_history")
+                    except Exception as col_err:
+                        print(f"Failed to add column {col_name}: {col_err}")
         else:
             create_table_query = """
                 CREATE TABLE IF NOT EXISTS bond_history(
@@ -102,13 +121,14 @@ def create_database_and_table():
                     date_time DATETIME NOT NULL,
                     min_bonus DECIMAL(10, 2) NOT NULL,
                     max_bonus DECIMAL(10, 2) NOT NULL,
-                    min_price DECIMAL(18, 2) NOT NULL,
-                    max_price DECIMAL(18, 2) NOT NULL,
-                    max_buy DECIMAL(18, 2) NOT NULL
+                    min_price DECIMAL(38, 8) NOT NULL,
+                    max_price DECIMAL(38, 8) NOT NULL,
+                    max_buy DECIMAL(38, 8) NOT NULL
                 ) ENGINE=InnoDB;
             """
             cursor.execute(create_table_query)
             print("Table bond_history newly created")
+
 
         # Create list_bond_contract_notify table
         if "list_bond_contract_notify" in tables:
