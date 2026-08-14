@@ -465,9 +465,9 @@ Calculations:
 
 # 28. Problems / Risks
 
-1. **Critical:** `NameError: name 'get_connection' is not defined` in `index.py` L33.
-2. **High:** Solana bond sync skipped (`if chain_id == 10143: continue`) in `execute_data.py` L251.
-3. **High:** `NameError: name 'API_URLS' is not defined` in `process_bond_evm.py` L27.
+1. **[RESOLVED]** `NameError: name 'get_connection' is not defined` in `index.py` (Fixed: Imported on Line 15).
+2. **High:** Solana bond sync skipped (`if chain_id == 10143: continue`) in `execute_data.py` L271.
+3. **[RESOLVED]** `NameError: name 'API_URLS' is not defined` in `process_bond_evm.py` (Fixed: Imported on Line 9).
 4. **Critical:** Hardcoded API keys and secrets in `config.py` and `call_multicall.py`.
 5. **Medium:** Duplicate pricing logic in `get_price.py` vs `helpers.py`.
 6. **High:** Missing retry/backoff wrappers around RPC and Webhook network requests.
@@ -503,4 +503,4 @@ Calculations:
 
 # 31. Final Conclusion
 
-The `apebond-notify` application is an effective automated bond scanner, but currently suffers from tight coupling between blockchain state readers and financial math, hardcoded secrets, duplicate pricing services, and critical missing imports in `index.py` and `process_bond_evm.py`. Refactoring into the proposed target modular architecture will isolate blockchain reading from business rules, enhance maintainability, and stabilize system execution.
+The `apebond-notify` application is an effective automated bond scanner. Key execution bugs (`get_connection` in `index.py` and `API_URLS` in `process_bond_evm.py`) have been resolved. Further refactoring into the proposed target modular architecture will isolate blockchain reading from business rules, eliminate duplicate pricing logic, and enhance long-term system maintainability and stability.

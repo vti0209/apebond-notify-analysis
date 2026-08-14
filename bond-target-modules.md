@@ -22,8 +22,8 @@
 | **Lấy Metadata** | Thường lấy trực tiếp từ Token Contract. | Phải tính PDA (Program Derived Address) với Metaplex Program ID để tìm Metadata Account. |
 
 ## 3. Rủi ro và câu hỏi cần xác nhận (Question Log)
-1. **Metadata Solana:** `process_bond_sol.py` có bỏ qua lỗi khi không tìm thấy Metadata. Cần xác nhận việc thiếu Metadata có ảnh hưởng đến cách tính toán giá sau này không?
-2. **Fallback Price:** `get_token_price_unified` sử dụng cả CoinGecko và DexScreener. Cần xác nhận độ trễ (Latency) của API này khi cache chưa có.
+1. **Metadata Solana:** `process_bond_sol.py` có xử lý try-catch khi không tìm thấy Metadata. Cần xác nhận việc thiếu Metadata có ảnh hưởng đến cách hiển thị thông tin hay không (hiện tại tên bond vẫn được lấy từ DB).
+2. **Fallback Price:** `get_token_price_unified` sử dụng thứ tự: ApeBond API -> CoinGecko -> DexScreener. Cần xác nhận độ trễ (Latency) của API này khi cache chưa có.
 3. **Vesting Term bằng 0:** Trong code `calc_debt_decay`, nếu `vesting_term == 0` thì trả về `total_debt`. Đây là trường hợp Bond đã hết hạn cần xử lý đặc biệt?
-4. **Hardcode Mainnet:** `RPC_URLS` đang hardcode các link Mainnet. Trong thực tế, code có cần hỗ trợ Testnet để dev không?
-5. **Lỗi Database:** `list_bond_contract_notify` chưa có cột `updated_at` nếu chạy lần đầu, cần đảm bảo script init DB chạy trước khi tool chạy.
+4. **Hardcode Mainnet & Keys:** `RPC_URLS` đang dùng link Mainnet và API Key hardcode. Cần chuyển các key này sang `.env`.
+5. **Cập nhật Bug Fix:** Lỗi thiếu import `get_connection` trong `index.py` và `API_URLS` trong `process_bond_evm.py` đã được sửa hoàn tất.

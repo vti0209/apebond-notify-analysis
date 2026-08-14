@@ -59,13 +59,13 @@ Dưới đây là bảng xác định chính xác các component chính trong so
 
 | Component | File | Function / Scope | Description |
 | :--- | :--- | :--- | :--- |
-| **Entry Point** | `index.py` | `if __name__ == "__main__":` (L96-L117) | Điểm khởi chạy ứng dụng, điều phối vòng lặp và xử lý ngoại lệ cấp cao nhất. |
-| **Scheduler / Bedtime** | `helpers.py` | `set_bedtime()` (L40-L45), `sleep_until_wakeup()` (L48-L63) | Kiểm tra giờ ngủ (23:30 - 06:30 VN_TZ), tạm dừng hệ thống đến sáng. |
-| **Bond Discovery** | `execute_data.py` | `fetch_and_update_bonds()` (L198-L305) | Khởi tạo HTTP GET `https://realtime-api.ape.bond/bonds`, upsert vào MySQL table `list_bond_contract_notify`. |
-| **EVM Processing** | `process_bond_evm.py` | `process_bonds()` (L443-L456), `process_single_bond_evm()` (L315-L440) | Quản lý ThreadPoolExecutor (10 workers), gọi Multicall V3 để đọc EVM contract. |
-| **Solana Processing** | `process_bond_sol.py` | `process_bond_sol()` (L348-L364), `process_single_bond_sol()` (L232-L347) | Quản lý ThreadPoolExecutor (10 workers), đọc RPC `get_account_info` và decode binary layout. |
-| **Pricing** | `helpers.py` | `get_token_price_unified()` (L320-L358) | Lấy giá token theo thứ tự: ApeBond API -> CoinGecko -> DexScreener. |
-| **Ranking** | `index.py` | `save_and_notify_top_bonds_by_bonus()` (L21-L95) | Sắp xếp mảng kết quả theo `max_bonus` giảm dần, cắt Top 10. |
+| **Entry Point** | `index.py` | `if __name__ == "__main__":` (L103-L123) | Điểm khởi chạy ứng dụng, điều phối vòng lặp và xử lý ngoại lệ cấp cao nhất. |
+| **Scheduler / Bedtime** | `helpers.py` | `set_bedtime()` (L46-L51), `sleep_until_wakeup()` (L54-L69) | Kiểm tra giờ ngủ (23:30 - 06:30 VN_TZ), tạm dừng hệ thống đến sáng. |
+| **Bond Discovery** | `execute_data.py` | `fetch_and_update_bonds()` (L224-L331) | Khởi tạo HTTP GET `https://realtime-api.ape.bond/bonds`, upsert vào MySQL table `list_bond_contract_notify`. |
+| **EVM Processing** | `process_bond_evm.py` | `process_bonds()` (L499-L515), `process_single_bond_evm()` (L357-L498) | Quản lý ThreadPoolExecutor (10 workers), gọi Multicall V3 để đọc EVM contract. |
+| **Solana Processing** | `process_bond_sol.py` | `process_bond_sol()` (L354-L371), `process_single_bond_sol()` (L238-L353) | Quản lý ThreadPoolExecutor (10 workers), đọc RPC `get_account_info` và decode binary layout. |
+| **Pricing** | `helpers.py` | `get_token_price_unified()` (L326-L364) | Lấy giá token theo thứ tự: ApeBond API -> CoinGecko -> DexScreener. |
+| **Ranking** | `index.py` | `save_and_notify_top_bonds_by_bonus()` (L22-L100) | Sắp xếp mảng kết quả theo `max_bonus` giảm dần, cắt Top 10. |
 | **Database** | `execute_data.py` | `create_database_and_table()`, `fetch_bond_data()`, `get_connection()` | Khởi tạo kết nối MySQL, tạo schema database/tables, đọc/ghi dữ liệu Bond. |
 | **Discord** | `helpers.py` | `send_discord_webhook_message()` (L27-L36) | Gửi thông báo danh sách Top Bond qua HTTP POST đến Discord Webhook. |
 
@@ -767,26 +767,24 @@ apebond_notify/
 
 Dưới đây là 8 vấn đề kỹ thuật nghiêm trọng được tìm thấy trực tiếp từ source code:
 
-### Issue 1: Lỗi Thiếu Import `get_connection` gây Fatal Crash trong `index.py`
-* **File:** `index.py` (Line 33)
+### Issue 1: [RESOLVED] Lỗi Thiếu Import `get_connection` trong `index.py` (Đã được khắc phục)
+* **File:** `index.py` (Line 15 & Line 33)
 * **Function:** `save_and_notify_top_bonds_by_bonus()`
-* **Impact:** Hàm gọi `connection = get_connection()`, nhưng `get_connection` **không được import** trong `index.py` (chỉ import `create_database_and_table`, `fetch_bond_data`, `fetch_and_update_bonds` từ `execute_data`). Khi có dữ liệu bond chạy vào hàm này, chương trình sẽ crash lập tức với `NameError: name 'get_connection' is not defined`.
-* **Recommendation:** Import `get_connection` từ `execute_data` trong `index.py`.
-* **Priority:** `CRITICAL`
+* **Status:** **Đã sửa.** `get_connection` đã được import từ `execute_data` tại Line 15 của `index.py`.
+* **Priority:** `RESOLVED` (Trước đây: `CRITICAL`)
 
 ### Issue 2: Bỏ Qua Solana Bonds Trong Quá Trình Đồng Bộ API
-* **File:** `execute_data.py` (Line 251)
+* **File:** `execute_data.py` (Line 271)
 * **Function:** `fetch_and_update_bonds()`
-* **Impact:** Code ghi rõ `if chain_id == 10143: continue`. Điều này khiến tất cả Bond thuộc mạng Solana từ API ApeBond bị bỏ qua, không bao giờ được cập nhật vào bảng `list_bond_contract_notify`.
-* **Recommendation:** Bỏ dòng `continue` này và thêm xử lý lưu record với `chain = 'SOL'`.
+* **Impact:** Code ghi rõ `if chain_id == 10143: continue`. Điều này khiến tất cả Bond thuộc mạng Solana từ API ApeBond bị bỏ qua, không tự động cập nhật từ API vào bảng `list_bond_contract_notify` (Solana bonds được duy trì trực tiếp trong DB).
+* **Recommendation:** Bỏ dòng `continue` này nếu muốn tự động sync Solana bonds từ API ApeBond.
 * **Priority:** `HIGH`
 
-### Issue 3: Lỗi Biến Chưa Khai Báo `API_URLS` Trong `process_bond_evm.py`
-* **File:** `process_bond_evm.py` (Line 27)
+### Issue 3: [RESOLVED] Lỗi Biến Chưa Khai Báo `API_URLS` Trong `process_bond_evm.py` (Đã được khắc phục)
+* **File:** `process_bond_evm.py` (Line 9 & Line 29)
 * **Function:** `get_abi()`
-* **Impact:** Hàm kiểm tra `if chain not in API_URLS`, nhưng biến `API_URLS` **không tồn tại/không được import** trong `process_bond_evm.py`. Nếu xảy ra ABI cache miss, hàm sẽ sập với `NameError: name 'API_URLS' is not defined`.
-* **Recommendation:** Khai báo dict `API_URLS` chứa URL API của Etherscan/BscScan trong `config.py` và import vào `process_bond_evm.py`.
-* **Priority:** `HIGH`
+* **Status:** **Đã sửa.** Biến `API_URLS` đã được import từ `config` tại Line 9 của `process_bond_evm.py` và khai báo đầy đủ trong `config.py` (Line 144).
+* **Priority:** `RESOLVED` (Trước đây: `HIGH`)
 
 ### Issue 4: Hardcode Secret Keys Vô Thời Hạn Trong Codebase
 * **File:** `config.py` (L7, L9-19, L22, L26), `call_multicall.py` (L4)
@@ -880,8 +878,8 @@ Tách dự án thành các layer độc lập:
 * `persistence/`: Repository pattern quản lý toàn bộ kết nối và câu lệnh MySQL.
 * `notification/`: Module chuyên trách format và gửi tin nhắn Discord.
 
-## 29.4 Các hành động cần thực hiện ngay
-1. Fix bug `NameError: name 'get_connection' is not defined` tại `index.py`.
-2. Fix bug `NameError: name 'API_URLS' is not defined` tại `process_bond_evm.py`.
-3. Mở lại sync tự động cho Solana Bonds trong `execute_data.py`.
+## 29.4 Các hành động đã xử lý & khuyến nghị tiếp theo
+1. **[ĐÃ SỬA]** Fix bug `NameError: name 'get_connection' is not defined` tại `index.py` (Đã import tại Line 15).
+2. **[ĐÃ SỬA]** Fix bug `NameError: name 'API_URLS' is not defined` tại `process_bond_evm.py` (Đã import từ `config` tại Line 9).
+3. Mở lại sync tự động cho Solana Bonds trong `execute_data.py` (nếu có nhu cầu sync tự động từ API ApeBond).
 4. Thu hồi và đưa toàn bộ hardcoded secret keys trong `config.py` và `call_multicall.py` vào `.env`.
