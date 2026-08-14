@@ -194,13 +194,14 @@ def fetch_bond_data(chain_name):
         cursor = conn.cursor(dictionary=True)
 
         if chain_name == "SOL":
-            query = "SELECT * FROM list_bond_contract_notify WHERE chain = %s"
+            # Fetch bonds explicitly set to SOL or with Base58 non-0x addresses
+            query = "SELECT * FROM list_bond_contract_notify WHERE chain = %s OR contract_address NOT LIKE '0x%%'"
             cursor.execute(query, ("SOL",))
 
         elif chain_name == "EVM":
             evm_chains = ("BNB", "ETH", "POL", "ARB", "BAS", "UNI", "BER", "SON", "LIN", "HYPER")
             placeholders = ', '.join(['%s'] * len(evm_chains))
-            query = f"SELECT * FROM list_bond_contract_notify WHERE chain IN ({placeholders})"
+            query = f"SELECT * FROM list_bond_contract_notify WHERE contract_address LIKE '0x%%' AND chain IN ({placeholders})"
             cursor.execute(query, evm_chains)
 
         else:
@@ -246,30 +247,19 @@ def fetch_and_update_bonds():
             if status != 'active':
                 continue
 
-            # ===== SỬA PHẦN NÀY =====
-            # Lấy chainId từ cấu trúc mới
+            # Lấy chainId từ API
             chain_id = bond.get('chainId')
-            
-            # Nếu không có chainId, thử lấy từ index hoặc các field khác
-            if chain_id is None:
-                # Thử lấy từ billAddress (nếu có)
-                bill_address = bond.get('billAddress', '')
-                # Hoặc có thể hardcode cho SOL
-                # SOL chainId là 10143
-                pass
             
             chain = ID_CHAIN_MAP.get(chain_id)
 
             if chain is None:
-                # Nếu chain_id không có trong map, thử kiểm tra đặc biệt
-                if chain_id == 10143:
+                if chain_id in (10143, 7565164):
                     chain = "SOL"
+                elif chain_id == 146:
+                    chain = "SON"
                 else:
                     log.warning(f"Unknown chain ID: {chain_id}")
                     continue
-
-            if chain_id == 10143:
-                continue
 
             supported_chains.add(chain)
 
@@ -279,8 +269,13 @@ def fetch_and_update_bonds():
             if not contract_address:
                 continue
 
-            contract_address_lower = contract_address.lower()
-            api_contract_addresses.add(contract_address_lower)
+            # Checksum / normalize contract address: lower for EVM 0x addresses, preserve case for Base58 SOL addresses
+            if str(contract_address).startswith('0x'):
+                contract_addr_normalized = contract_address.lower()
+            else:
+                contract_addr_normalized = str(contract_address).strip()
+
+            api_contract_addresses.add(contract_addr_normalized)
 
             query = """
                 INSERT INTO list_bond_contract_notify (chain, contract_address, token_symbol, status)
@@ -291,13 +286,13 @@ def fetch_and_update_bonds():
                     status = VALUES(status),
                     updated_at = CURRENT_TIMESTAMP
             """
-            value = (chain, contract_address_lower, token_symbol, status)
+            value = (chain, contract_addr_normalized, token_symbol, status)
             cursor.execute(query, value)
 
         # Mark missing bonds as sold
         if supported_chains:
             placeholders = ', '.join(['%s'] * len(supported_chains))
-            query = f"SELECT LOWER(contract_address) FROM list_bond_contract_notify WHERE status = 'active' AND chain IN ({placeholders})"
+            query = f"SELECT contract_address FROM list_bond_contract_notify WHERE status = 'active' AND chain IN ({placeholders})"
             cursor.execute(query, list(supported_chains))
             db_bonds = set(row[0] for row in cursor.fetchall())
 
@@ -308,8 +303,8 @@ def fetch_and_update_bonds():
                     cursor.execute("""
                         UPDATE list_bond_contract_notify
                         SET status = 'sold', updated_at = CURRENT_TIMESTAMP
-                        WHERE LOWER(contract_address) = %s
-                    """, (old_contract,))
+                        WHERE contract_address = %s OR LOWER(contract_address) = %s
+                    """, (old_contract, old_contract.lower()))
 
         conn.commit()
         log.info("Successfully updated bonds from API.")

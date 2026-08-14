@@ -286,8 +286,8 @@ def get_token_price_by_apebond_api(chain_id, token_address):
     
     # Map chain_id back to chain_name for price_cache keys
     id_to_name = {v: k for k, v in CHAIN_IDS.items()}
-    if 7565164 not in id_to_name:
-        id_to_name[7565164] = "SOL"
+    id_to_name[7565164] = "SOL"
+    id_to_name[10143] = "SOL"
 
     if not _apebond_api_fetched:
         try:
@@ -299,13 +299,18 @@ def get_token_price_by_apebond_api(chain_id, token_address):
                     cid = int(cid_str)
                     name = id_to_name.get(cid)
                     if not name:
-                        continue
+                        if cid in (7565164, 10143):
+                            name = "SOL"
+                        else:
+                            continue
                     
                     for t in tokens:
                         addr = t.get("tokenAddress", "").lower()
                         price = t.get("price")
                         if addr and price:
                             price_cache[f"{name}_{addr}"] = float(price)
+                            if cid in (7565164, 10143):
+                                price_cache[f"SOL_{addr}"] = float(price)
                 
                 _apebond_api_fetched = True
                 log.info(f"✅ ApeBond Price API: Cached prices for all supported chains.")
@@ -319,9 +324,11 @@ def get_token_price_by_apebond_api(chain_id, token_address):
     # Look up the specific token in the newly populated cache
     name = id_to_name.get(chain_id)
     if name:
-        return price_cache.get(f"{name}_{token_address.lower()}")
-    
-    return None
+        res = price_cache.get(f"{name}_{token_address.lower()}")
+        if res:
+            return res
+
+    return price_cache.get(f"SOL_{token_address.lower()}")
 
 def get_token_price_unified(chain_name, token_address):
     """

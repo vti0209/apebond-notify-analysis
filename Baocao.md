@@ -115,9 +115,9 @@ Danh sách Bond ban đầu được lấy từ REST API của ApeBond và lưu t
 * **Parsing Logic:**
   - Lấy danh sách từ key `bonds`: `response.json().get('bonds', [])`.
   - Kiểm tra trạng thái: `is_active = not bond.get('soldOut', True)`. Nếu không `active`, bỏ qua (`continue`).
-  - Ánh xạ `chainId`: Tra cứu `ID_CHAIN_MAP` trong `config.py` (L127-L139).
-  - Trường đặc biệt Solana: `chainId == 10143` được map thành `"SOL"`.
-  - **Lưu ý quan trọng trong code (`execute_data.py` L245):** Code chứa dòng lệnh `if chain_id == 10143: continue`, khiến dữ liệu Solana trả về từ API ApeBond bị **bỏ qua không lưu vào DB** trong hàm đồng bộ này! Solana bonds chỉ chạy được khi đã có sẵn trong bảng `list_bond_contract_notify`.
+  - Ánh xạ `chainId`: Tra cứu `ID_CHAIN_MAP` trong `config.py`.
+  - Trường đặc biệt Solana: `chainId == 7565164` và `chainId == 10143` được map thành `"SOL"` (với hợp đồng dạng Base58 44 ký tự). `chainId == 146` được map thành `"SON"` (Sonic EVM).
+  - Tự động đồng bộ các bond Solana & EVM từ API ApeBond vào DB với định dạng địa chỉ nguyên bản (preserve case cho Solana Base58, lowercase cho EVM Hex).
   - Thông tin lưu trữ: `billAddress` (đã convert `.lower()`), `payoutTokenName` (token_symbol), `status` ('active').
   - **Upsert DB Query:**
     ```sql
@@ -773,12 +773,11 @@ Dưới đây là 8 vấn đề kỹ thuật nghiêm trọng được tìm thấ
 * **Status:** **Đã sửa.** `get_connection` đã được import từ `execute_data` tại Line 15 của `index.py`.
 * **Priority:** `RESOLVED` (Trước đây: `CRITICAL`)
 
-### Issue 2: Bỏ Qua Solana Bonds Trong Quá Trình Đồng Bộ API
-* **File:** `execute_data.py` (Line 271)
+### Issue 2: [RESOLVED] Đồng Bộ Solana & SON Bonds Từ API ApeBond (Đã được khắc phục)
+* **File:** `execute_data.py` (Line 251 & Line 266-270)
 * **Function:** `fetch_and_update_bonds()`
-* **Impact:** Code ghi rõ `if chain_id == 10143: continue`. Điều này khiến tất cả Bond thuộc mạng Solana từ API ApeBond bị bỏ qua, không tự động cập nhật từ API vào bảng `list_bond_contract_notify` (Solana bonds được duy trì trực tiếp trong DB).
-* **Recommendation:** Bỏ dòng `continue` này nếu muốn tự động sync Solana bonds từ API ApeBond.
-* **Priority:** `HIGH`
+* **Status:** **Đã sửa.** Đã loại bỏ điều kiện bỏ qua `chain_id == 10143` và cập nhật `ID_CHAIN_MAP` hỗ trợ cả `10143: "SOL"` và `7565164: "SON"`. Đồng thời tự động bảo tồn định dạng nguyên bản (case-sensitive) cho các contract address dạng Solana Base58.
+* **Priority:** `RESOLVED` (Trước đây: `HIGH`)
 
 ### Issue 3: [RESOLVED] Lỗi Biến Chưa Khai Báo `API_URLS` Trong `process_bond_evm.py` (Đã được khắc phục)
 * **File:** `process_bond_evm.py` (Line 9 & Line 29)
@@ -798,11 +797,10 @@ Dưới đây là 8 vấn đề kỹ thuật nghiêm trọng được tìm thấ
 * **Recommendation:** Gộp thành 1 module `pricing/price_service.py` duy nhất.
 * **Priority:** `MEDIUM`
 
-### Issue 6: Không Có Cơ Chế Retry / Backoff Cho RPC & API Calls
-* **File:** `process_bond_evm.py`, `process_bond_sol.py`, `helpers.py`
-* **Impact:** Khi RPC node bị ngắt kết nối chớp nhoáng hoặc API bị rate limit (HTTP 429), request thất bại ngay lập tức khiến Bond bị bỏ qua mà không được thử lại.
-* **Recommendation:** Thêm thư viện `tenacity` hoặc decorator retry với Exponential Backoff.
-* **Priority:** `HIGH`
+### Issue 6: [RESOLVED] Cơ Chế Retry / RPC Failover Cho EVM Calls (Đã được khắc phục)
+* **File:** `config.py` & `process_bond_evm.py` (`get_data_bond_contract`)
+* **Status:** **Đã sửa.** Đã thêm dictionary `FALLBACK_RPC_URLS` trong `config.py` và tích hợp vòng lặp xoay vòng Failover + retry tự động 2 lần per node trong `process_bond_evm.py`. Đã khắc phục triệt để lỗi `-32603 Internal Error` trên MASQ và GGBR.
+* **Priority:** `RESOLVED` (Trước đây: `HIGH`)
 
 ### Issue 7: SQL Query Không Lọc Trạng Thái Active Trong `fetch_bond_data`
 * **File:** `execute_data.py` (L180-L185)

@@ -1,6 +1,13 @@
 import logging 
 import os
 import sys
+
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 from logging.handlers import TimedRotatingFileHandler
 
 def setup_logger(name, log_file, level=logging.INFO):

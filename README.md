@@ -466,11 +466,11 @@ Calculations:
 # 28. Problems / Risks
 
 1. **[RESOLVED]** `NameError: name 'get_connection' is not defined` in `index.py` (Fixed: Imported on Line 15).
-2. **High:** Solana bond sync skipped (`if chain_id == 10143: continue`) in `execute_data.py` L271.
+2. **[RESOLVED]** Solana / SON bond API sync skipped (Fixed: Removed `if chain_id == 10143: continue` & added `10143: "SOL"`, `7565164: "SON"` in `ID_CHAIN_MAP`).
 3. **[RESOLVED]** `NameError: name 'API_URLS' is not defined` in `process_bond_evm.py` (Fixed: Imported on Line 9).
 4. **Critical:** Hardcoded API keys and secrets in `config.py` and `call_multicall.py`.
 5. **Medium:** Duplicate pricing logic in `get_price.py` vs `helpers.py`.
-6. **High:** Missing retry/backoff wrappers around RPC and Webhook network requests.
+6. **[RESOLVED]** MASQ / GGBR RPC Internal Error & Failover (Fixed: Added `FALLBACK_RPC_URLS` & automatic failover retry loop in `get_data_bond_contract`).
 7. **Medium:** `fetch_bond_data` SQL query lacks `WHERE status = 'active'`.
 8. **Medium:** RAM `price_cache` lacks TTL/expiration policy.
 

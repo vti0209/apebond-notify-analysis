@@ -6,13 +6,14 @@ import time
 import os
 import tempfile
 from web3 import Web3
-from config import RPC_URLS, API_KEYS, API_URLS, DB_CONFIG, MULTICALL_V3_ADDRESS, CHAIN_IDS
+from config import RPC_URLS, API_KEYS, API_URLS, DB_CONFIG, MULTICALL_V3_ADDRESS, CHAIN_IDS, FALLBACK_RPC_URLS
 from call_multicall import MULTICALL_V3_ABI, decode_address, decode_uint256, decode_terms, decode_true_bond_prices
 from helpers import get_token_price_unified, get_pair_token_price_dexscreener
 import concurrent.futures
 from logging_setup import log
 
 ABI_CACHE_DIR = "abi_cache"
+
 def get_abi(chain, bond_address):
     os.makedirs(ABI_CACHE_DIR, exist_ok=True)
     cache_file = os.path.join(ABI_CACHE_DIR, f"{chain.lower()}_{bond_address.lower()}.json")
@@ -109,12 +110,13 @@ def get_target_token_address(web3: Web3, token_address: str) -> str:
     # Nếu không phải proxy, trả về token gốc
     return token_address
 
-# Connect to web3
-def get_web3_connection(chain_name):
-    provider_url = RPC_URLS.get(chain_name)
-    if not provider_url:
+# Connect to web3 with timeout
+def get_web3_connection(chain_name, rpc_url=None):
+    if not rpc_url:
+        rpc_url = RPC_URLS.get(chain_name)
+    if not rpc_url:
         raise Exception(f"❌ No RPC URL for {chain_name}")
-    return Web3(Web3.HTTPProvider(provider_url))
+    return Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
 
 # Create Instance contract
 def get_contract(web3, contract_address, abi):
@@ -126,8 +128,9 @@ def load_abi(file_path):
         return json.load(f)
 
 def get_data_bond_contract(chain, bond_address, multicall_v3_address=None):
-    web3 = get_web3_connection(chain)
     cs_bond_address = safe_to_checksum(bond_address)
+    if not cs_bond_address:
+        raise ValueError(f"Invalid bond address: {bond_address}")
     
     if not multicall_v3_address:
         multicall_v3_address = MULTICALL_V3_ADDRESS
@@ -139,13 +142,14 @@ def get_data_bond_contract(chain, bond_address, multicall_v3_address=None):
 
     cs_multicall_address = safe_to_checksum(target_multicall)
     
-    # Tạo callData cho các hàm
-    payout_sig = web3.keccak(text="payoutToken()")[:4]
-    principal_sig = web3.keccak(text="principalToken()")[:4]
-    true_bill_price_sig = web3.keccak(text="trueBillPrice()")[:4]
-    terms_sig = web3.keccak(text="terms()")[:4]
-    fee_in_payout_sig = web3.keccak(text="feeInPayout()")[:4]
-    true_bond_price_tier_sig = web3.keccak(text="trueBondPrices()")[:4]
+    # Build signatures and calls
+    web3_dummy = Web3()
+    payout_sig = web3_dummy.keccak(text="payoutToken()")[:4]
+    principal_sig = web3_dummy.keccak(text="principalToken()")[:4]
+    true_bill_price_sig = web3_dummy.keccak(text="trueBillPrice()")[:4]
+    terms_sig = web3_dummy.keccak(text="terms()")[:4]
+    fee_in_payout_sig = web3_dummy.keccak(text="feeInPayout()")[:4]
+    true_bond_price_tier_sig = web3_dummy.keccak(text="trueBondPrices()")[:4]
 
     calls = [
         {"target": cs_bond_address, "callData": payout_sig},
@@ -155,10 +159,35 @@ def get_data_bond_contract(chain, bond_address, multicall_v3_address=None):
         {"target": cs_bond_address, "callData": fee_in_payout_sig},
         {"target": cs_bond_address, "callData": true_bond_price_tier_sig},
     ]
-    
-    contract = get_contract(web3, cs_multicall_address, abi=MULTICALL_V3_ABI)
 
-    results = contract.functions.tryAggregate(False, calls).call()
+    primary_url = RPC_URLS.get(chain)
+    fallbacks = FALLBACK_RPC_URLS.get(chain, [])
+    rpc_list = []
+    if primary_url:
+        rpc_list.append(primary_url)
+    for fb in fallbacks:
+        if fb not in rpc_list:
+            rpc_list.append(fb)
+
+    last_exception = None
+    results = None
+
+    for rpc_url in rpc_list:
+        for attempt in range(2):
+            try:
+                w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
+                contract = get_contract(w3, cs_multicall_address, abi=MULTICALL_V3_ABI)
+                results = contract.functions.tryAggregate(False, calls).call()
+                if results:
+                    break
+            except Exception as e:
+                last_exception = e
+                time.sleep(0.3 * (attempt + 1))
+        if results:
+            break
+
+    if not results:
+        raise Exception(f"Multicall failed for {bond_address} on {chain}. Last error: {last_exception}")
     
     # Decode kết quả (giải mã địa chỉ ERC20 từ 32 byte returnData)
     payout_token = decode_address(results[0][1])
@@ -168,7 +197,7 @@ def get_data_bond_contract(chain, bond_address, multicall_v3_address=None):
     fee_in_payout = decode_uint256(results[4][1])
     try:
         true_bond_price_tier = decode_true_bond_prices(results[5][1])
-    except:
+    except Exception:
         true_bond_price_tier = None  # fallback nếu fail
         
     return payout_token, principal_token, true_bill_price, true_bond_price_tier, terms, fee_in_payout
@@ -355,7 +384,6 @@ def calc_bonus_with_fee(bonus, fee_in_payout):
     return ((1 + bonus / 100) * (1 - (fee_in_payout/10000) / 100) - 1) * 100
 
 def process_single_bond_evm(bond):
-    log.info(f"Processing bond: {bond.get('chain')} - {bond.get('contract_address')} - {bond.get('token_symbol')}")
     chain_name = bond.get("chain")
     bond_address = bond.get("contract_address")
     bond_name = bond.get("token_symbol")
@@ -363,6 +391,12 @@ def process_single_bond_evm(bond):
 
     if status != "active":
         return None
+
+    if not bond_address or not str(bond_address).strip().startswith("0x"):
+        log.warning(f"⚠️ Skipping non-EVM contract address in EVM processor: {bond_address} ({bond_name}) on {chain_name}")
+        return None
+
+    log.info(f"Processing EVM bond: {chain_name} - {bond_address} - {bond_name}")
     # skip_addresses = [
     #     '0x4075b614e75cb4aed6c8de4b0180e3d2bede4308',  # BG
     #     '0x3b4e1a2d575fb77fc10fefe182b8e4b01d3563f6',  # AST
